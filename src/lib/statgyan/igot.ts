@@ -8,7 +8,8 @@
 
 import type { GapItem } from "./types";
 
-export { IGOT_CATALOG, IGOTCourse } from "./courses";
+export { IGOT_CATALOG } from "./courses";
+export type { IGOTCourse } from "./courses";
 import { IGOT_CATALOG, type IGOTCourse } from "./courses";
 import { DOMAIN_MAP } from "./engine";
 export interface IGOTRecommendation {
