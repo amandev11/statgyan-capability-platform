@@ -32,12 +32,48 @@ const schema = defineSchema(
       role: v.optional(roleValidator), // role of the user. do not remove
     }).index("email", ["email"]), // index for the email. do not remove or modify
 
-    // add other tables here
+    // ---- Quiza domain ----
+    quizzes: defineTable({
+      slug: v.string(),
+      title: v.string(),
+      description: v.string(),
+      category: v.string(),
+      difficulty: v.union(
+        v.literal("Easy"),
+        v.literal("Medium"),
+        v.literal("Hard"),
+      ),
+      estMinutes: v.number(),
+    })
+      .index("by_slug", ["slug"])
+      .index("by_category", ["category"]),
 
-    // tableName: defineTable({
-    //   ...
-    //   // table fields
-    // }).index("by_field", ["field"])
+    questions: defineTable({
+      quizId: v.id("quizzes"),
+      order: v.number(),
+      text: v.string(),
+      options: v.array(v.string()),
+      correctIndex: v.number(),
+      explanation: v.string(),
+    }).index("by_quiz", ["quizId"]),
+
+    attempts: defineTable({
+      userId: v.id("users"),
+      userName: v.optional(v.string()),
+      quizId: v.id("quizzes"),
+      quizSlug: v.string(),
+      quizTitle: v.string(),
+      category: v.string(),
+      answers: v.array(v.number()),
+      total: v.number(),
+      correctCount: v.number(),
+      scorePct: v.number(),
+      durationMs: v.number(),
+      completedAt: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_quiz", ["quizId"])
+      .index("by_score", ["scorePct"]),
   },
   {
     schemaValidation: false,

@@ -4,38 +4,50 @@ import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
+import { useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import { CustomCursor } from "@/components/quiza/cursor";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import "./index.css";
 
-import { AppShell } from "./components/statgyan/app-shell.tsx";
-import { StatgyanProvider } from "./lib/statgyan/store.tsx";
-
-// Lazy load route components for better code splitting
 const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
-const Architecture = lazy(() => import("./pages/Architecture.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
-const Overview = lazy(() => import("./pages/dashboard/Overview.tsx"));
-const Competencies = lazy(() => import("./pages/dashboard/Competencies.tsx"));
-const Gaps = lazy(() => import("./pages/dashboard/Gaps.tsx"));
-const Path = lazy(() => import("./pages/dashboard/Path.tsx"));
-const Tutor = lazy(() => import("./pages/dashboard/Tutor.tsx"));
-const QuizLab = lazy(() => import("./pages/dashboard/QuizLab.tsx"));
-const Materials = lazy(() => import("./pages/dashboard/Materials.tsx"));
-const Igot = lazy(() => import("./pages/dashboard/Igot.tsx"));
-const Assessments = lazy(() => import("./pages/dashboard/Assessments.tsx"));
-const Analytics = lazy(() => import("./pages/dashboard/Analytics.tsx"));
-const Admin = lazy(() => import("./pages/dashboard/Admin.tsx"));
+const Explore = lazy(() => import("./pages/Explore.tsx"));
+const QuizRunner = lazy(() => import("./pages/QuizRunner.tsx"));
+const Results = lazy(() => import("./pages/Results.tsx"));
+const Leaderboard = lazy(() => import("./pages/Leaderboard.tsx"));
+const Profile = lazy(() => import("./pages/Profile.tsx"));
+const AppShell = lazy(() =>
+  import("./components/quiza/app-shell.tsx").then((m) => ({ default: m.AppShell })),
+);
+const DashboardHome = lazy(() => import("./pages/dashboard/Home.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-pulse text-muted-foreground">Loading...</div>
+    <div className="flex min-h-screen items-center justify-center bg-[var(--qz-bg)]">
+      <div className="animate-shimmer size-8 rounded-lg" />
     </div>
   );
+}
+
+/** Idempotent content seeding — runs once per session on first mount. */
+let seedRequested = false;
+function Seeder() {
+  const ensureSeeded = useMutation(api.quiza.ensureSeeded);
+  useEffect(() => {
+    if (seedRequested) return;
+    seedRequested = true;
+    void ensureSeeded().catch((err: unknown) => {
+      seedRequested = false;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[Quiza] Seeding skipped:", msg);
+    });
+  }, [ensureSeeded]);
+  return null;
 }
 
 /** Silent error boundary — if VlyToolbar crashes it renders nothing instead of
@@ -75,14 +87,14 @@ class RootErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-background text-foreground p-6">
+        <div className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
           <div className="max-w-lg text-center">
             <p className="text-sm font-semibold">Preview runtime error</p>
-            <p className="mt-2 text-xs text-muted-foreground break-words">
+            <p className="mt-2 break-words text-xs text-muted-foreground">
               {this.state.message}
             </p>
             {this.state.stack && (
-              <pre className="mt-3 text-left text-[10px] leading-4 text-muted-foreground/80 max-h-40 overflow-auto rounded border border-border/60 p-2">
+              <pre className="mt-3 max-h-40 overflow-auto rounded border border-border/60 p-2 text-left text-[10px] leading-4 text-muted-foreground/80">
                 {this.state.stack}
               </pre>
             )}
@@ -95,8 +107,6 @@ class RootErrorBoundary extends React.Component<
 }
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
-
-
 
 function RouteSyncer() {
   const location = useLocation();
@@ -121,52 +131,66 @@ function RouteSyncer() {
   return null;
 }
 
-
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RootErrorBoundary>
       <ToolbarErrorBoundary>
         <VlyToolbar />
       </ToolbarErrorBoundary>
-      <StatgyanProvider>
-        <ConvexAuthProvider client={convex}>
-          <BrowserRouter>
-            <RouteSyncer />
-            <Suspense fallback={<RouteLoading />}>
-              <Routes>
-                <Route path="/" element={<Landing />} />
-                <Route path="/architecture" element={<Architecture />} />
-                <Route
-                  path="/auth"
-                  element={<AuthPage redirectAfterAuth="/dashboard" />}
-                />
-                <Route
-                  path="/dashboard"
-                  element={
-                    <RequireAuth>
-                      <AppShell />
-                    </RequireAuth>
-                  }
-                >
-                  <Route index element={<Overview />} />
-                  <Route path="competencies" element={<Competencies />} />
-                  <Route path="gaps" element={<Gaps />} />
-                  <Route path="path" element={<Path />} />
-                  <Route path="tutor" element={<Tutor />} />
-                  <Route path="quiz-lab" element={<QuizLab />} />
-                  <Route path="materials" element={<Materials />} />
-                  <Route path="igot" element={<Igot />} />
-                  <Route path="assessments" element={<Assessments />} />
-                  <Route path="analytics" element={<Analytics />} />
-                  <Route path="admin" element={<Admin />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </BrowserRouter>
-          <Toaster />
-        </ConvexAuthProvider>
-      </StatgyanProvider>
+      <ConvexAuthProvider client={convex}>
+        <CustomCursor />
+        <Seeder />
+        <BrowserRouter>
+          <RouteSyncer />
+          <Suspense fallback={<RouteLoading />}>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route
+                path="/auth"
+                element={<AuthPage redirectAfterAuth="/dashboard" />}
+              />
+              <Route
+                path="/dashboard"
+                element={
+                  <RequireAuth>
+                    <AppShell />
+                  </RequireAuth>
+                }
+              >
+                <Route index element={<DashboardHome />} />
+              </Route>
+              <Route path="/explore" element={<Explore />} />
+              <Route
+                path="/quiz/:slug"
+                element={
+                  <RequireAuth>
+                    <QuizRunner />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/results/:attemptId"
+                element={
+                  <RequireAuth>
+                    <Results />
+                  </RequireAuth>
+                }
+              />
+              <Route path="/leaderboard" element={<Leaderboard />} />
+              <Route
+                path="/profile"
+                element={
+                  <RequireAuth>
+                    <Profile />
+                  </RequireAuth>
+                }
+              />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+        <Toaster />
+      </ConvexAuthProvider>
     </RootErrorBoundary>
   </StrictMode>,
 );
