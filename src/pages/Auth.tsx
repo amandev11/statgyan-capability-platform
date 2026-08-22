@@ -111,7 +111,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
         <div className="edge-glow animate-rise w-full max-w-[400px] rounded-2xl border hairline bg-[var(--qz-surface-1)] p-8 shadow-[var(--shadow-elevated)]">
           {step === "signIn" ? (
             <>
-              <p className="eyebrow">Welcome to Quiza</p>
+              <p className="eyebrow">Welcome to StatGyan</p>
               <h1 className="mt-2 text-xl font-semibold tracking-tight">
                 Sign in or create an account
               </h1>
@@ -255,7 +255,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       </div>
 
       <footer className="pb-8 text-center text-xs text-muted-qz">
-        Secured by one-time codes · Your scores stay yours
+        Secured by one-time codes · Competency evidence stays yours
       </footer>
     </div>
   );

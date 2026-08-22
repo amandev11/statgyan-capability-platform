@@ -40,7 +40,32 @@ function formatTime(ms: number) {
 export default function QuizRunner() {
   const { slug = "" } = useParams();
   const navigate = useNavigate();
-  const data = useQuery(api.quiza.getQuizBySlug, { slug });
+  const isCustom = slug.startsWith("set-");
+  const seededData = useQuery(
+    api.quiza.getQuizBySlug,
+    isCustom ? "skip" : { slug },
+  );
+  const customData = useQuery(
+    api.quiza.getAssessment,
+    isCustom ? { id: slug.slice(4) as never } : "skip",
+  );
+  const data = isCustom
+    ? customData === undefined
+      ? undefined
+      : customData === null
+        ? null
+        : {
+            quiz: {
+              slug,
+              title: customData.title,
+              description: customData.description,
+              category: customData.category,
+              difficulty: customData.difficulty as "Easy" | "Medium" | "Hard",
+              estMinutes: customData.estMinutes,
+            },
+            questions: customData.questions.map((q, i) => ({ ...q, order: i })),
+          }
+    : seededData;
   const submitAttempt = useMutation(api.quiza.submitAttempt);
 
   const [phase, setPhase] = useState<Phase>("intro");

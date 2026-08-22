@@ -1,16 +1,13 @@
-// Static seed content for Quiza — authored once, inserted into Convex on first boot.
-
-export interface SeedCategory {
-  name: string;
-  tagline: string;
-  hue: number; // accent hue for category identity
-}
+// Static seed content for StatGyan — statistical competence catalogue.
+// Authored once, inserted into Convex on first boot (or after taxonomy reset).
 
 export interface SeedQuestion {
   text: string;
   options: [string, string, string, string];
   correctIndex: number;
   explanation: string;
+  domain?: string;
+  sourceRef?: string;
 }
 
 export interface SeedQuiz {
@@ -20,619 +17,758 @@ export interface SeedQuiz {
   category: string;
   difficulty: "Easy" | "Medium" | "Hard";
   estMinutes: number;
+  domain?: string;
   questions: SeedQuestion[];
 }
 
-export const CATEGORIES: SeedCategory[] = [
-  { name: "Science", tagline: "From quarks to ecosystems", hue: 210 },
-  { name: "Technology", tagline: "How the digital world works", hue: 250 },
-  { name: "History", tagline: "The events that shaped us", hue: 30 },
-  { name: "Geography", tagline: "Rivers, peaks and plates", hue: 150 },
-  { name: "Business", tagline: "Markets, money and strategy", hue: 85 },
-  { name: "Entertainment", tagline: "Screen, stage and sound", hue: 330 },
-  { name: "Sports", tagline: "Records, rules and legends", hue: 15 },
-  { name: "General Knowledge", tagline: "A bit of everything", hue: 265 },
+/** Competency domains for India's Official Statistical System. */
+export const DOMAIN_CATALOG: {
+  id: string;
+  name: string;
+  tagline: string;
+}[] = [
+  { id: "survey-methodology", name: "Survey Methodology", tagline: "Designing instruments and field operations" },
+  { id: "sampling-estimation", name: "Sampling & Estimation", tagline: "Selecting units and quantifying precision" },
+  { id: "data-quality", name: "Data Quality", tagline: "Validation, editing and assurance" },
+  { id: "statistical-analysis", name: "Statistical Analysis", tagline: "From description to inference" },
+  { id: "data-visualization", name: "Data Visualization", tagline: "Charts that carry evidence" },
+  { id: "statistical-computing", name: "Statistical Computing", tagline: "Python, SQL and reproducible workflows" },
+  { id: "official-statistics", name: "Official Statistics & Standards", tagline: "NSS, SDG indicators and dissemination" },
+  { id: "governance-ethics", name: "Data Governance & Ethics", tagline: "Confidentiality, consent and stewardship" },
 ];
+
+const D = {
+  survey: "Survey Methodology",
+  sampling: "Sampling & Estimation",
+  quality: "Data Quality",
+  analysis: "Statistical Analysis",
+  viz: "Data Visualization",
+  computing: "Statistical Computing",
+  official: "Official Statistics & Standards",
+  governance: "Data Governance & Ethics",
+};
 
 export const QUIZZES: SeedQuiz[] = [
   {
-    slug: "foundations-of-physics",
-    title: "Foundations of Physics",
+    slug: "survey-design-fundamentals",
+    title: "Survey Design Fundamentals",
     description:
-      "Motion, energy and light — the core principles that explain how the physical universe behaves.",
-    category: "Science",
+      "Questionnaire construction, modes of collection and non-response control — the craft of measuring well.",
+    category: D.survey,
+    domain: D.survey,
     difficulty: "Medium",
     estMinutes: 6,
     questions: [
       {
-        text: "Which of Newton's laws states that every action has an equal and opposite reaction?",
-        options: ["First law", "Second law", "Third law", "Law of gravitation"],
+        text: "A household survey shows substantial non-response concentrated among urban migrants. Which intervention most directly reduces non-response bias?",
+        options: [
+          "Increase the overall sample size uniformly",
+          "Apply post-stratification weights only",
+          "Introduce targeted follow-up protocols for migrant settlements",
+          "Drop non-responding households from the frame",
+        ],
         correctIndex: 2,
         explanation:
-          "Newton's third law establishes that forces always occur in pairs: body A exerts on B a force equal in magnitude and opposite in direction to the force B exerts on A.",
+          "Targeted follow-up converts systematic non-respondents into respondents, attacking the bias at its source; weighting alone only compensates statistically.",
+        domain: D.survey,
+        sourceRef: "Non-response reduction protocols",
       },
       {
-        text: "What is the SI unit of electrical resistance?",
-        options: ["Volt", "Ampere", "Ohm", "Watt"],
-        correctIndex: 2,
+        text: "Why does question order matter in a structured questionnaire?",
+        options: [
+          "It doesn't — respondents answer each item independently",
+          "Earlier questions can prime interpretation of later ones",
+          "Longer questionnaires are always more accurate",
+          "Order only matters in telephone surveys",
+        ],
+        correctIndex: 1,
         explanation:
-          "Resistance is measured in ohms (Ω), defined as one volt per ampere, after Georg Simon Ohm.",
+          "Context effects mean an earlier item can anchor how a later one is understood; designers randomise or carefully sequence sensitive items.",
+        domain: D.survey,
       },
       {
-        text: "Light travels fastest through which medium?",
-        options: ["Water", "Glass", "Diamond", "Vacuum"],
-        correctIndex: 3,
-        explanation:
-          "The speed of light c ≈ 299,792 km/s is a maximum in vacuum; any material medium slows it down in proportion to its refractive index.",
-      },
-      {
-        text: "Kinetic energy of a moving object depends on its mass and which other quantity?",
-        options: ["Velocity", "Acceleration", "Volume", "Temperature"],
+        text: "Which pretesting method exposes comprehension problems before fieldwork?",
+        options: [
+          "Cognitive interviewing with a small sample",
+          "Increasing the number of supervisors",
+          "Extending the reference period",
+          "Adding more response categories",
+        ],
         correctIndex: 0,
         explanation:
-          "Kinetic energy equals one-half mass times velocity squared (½mv²), so it grows with the square of speed.",
+          "Cognitive interviews ask respondents to think aloud, revealing misread terms and ambiguous wording that pilot counts alone would miss.",
+        domain: D.survey,
       },
       {
-        text: "Sound cannot travel through which of the following?",
-        options: ["Steel", "Water", "Air", "Vacuum"],
-        correctIndex: 3,
+        text: "In a household consumption survey, what is the main risk of a 12-month recall period for food items?",
+        options: [
+          "Recall decay producing understated, smoothed estimates",
+          "Overstated expenditure due to double counting",
+          "Telescoping is impossible over long periods",
+          "No risk; longer recall is always better",
+        ],
+        correctIndex: 0,
         explanation:
-          "Sound is a mechanical wave that requires a material medium to propagate — in vacuum there is nothing to compress, so no sound travels.",
+          "Respondents cannot reliably remember routine purchases over a year; estimates drift toward 'usual' patterns, biasing means downward.",
+        domain: D.survey,
       },
       {
-        text: "Which quantity does a pendulum's period NOT depend on (for small swings)?",
-        options: ["String length", "Gravity", "Bob mass", "All affect it"],
-        correctIndex: 2,
+        text: "The primary purpose of a field operations manual is to…",
+        options: [
+          "Replace interviewer training entirely",
+          "Standardise procedures so measurements are comparable across enumerators",
+          "Serve as a legal contract with respondents",
+          "Document software settings only",
+        ],
+        correctIndex: 1,
         explanation:
-          "For small oscillations the period T = 2π√(L/g) depends only on length and gravitational acceleration — the bob's mass cancels out.",
+          "Standardisation is the point: when every enumerator follows identical procedures, variation reflects the population, not the enumerator.",
+        domain: D.survey,
+      },
+      {
+        text: "Which mode change is most likely to introduce mode effects into a time series?",
+        options: [
+          "Switching from face-to-face to telephone without a bridging study",
+          "Printing new cover pages",
+          "Hiring additional enumerators under the same protocol",
+          "Reprinting the same questionnaire",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Different modes produce different answers for identical questions; a bridging study quantifies the discontinuity before the switch.",
+        domain: D.survey,
       },
     ],
   },
   {
-    slug: "the-living-cell",
-    title: "The Living Cell",
+    slug: "sampling-and-estimation",
+    title: "Sampling & Estimation Essentials",
     description:
-      "A tour of biology's fundamental unit — organelles, DNA and the chemistry of life.",
-    category: "Science",
+      "Frames, strata, weights and standard errors — how samples earn the right to speak for populations.",
+    category: D.sampling,
+    domain: D.sampling,
+    difficulty: "Medium",
+    estMinutes: 6,
+    questions: [
+      {
+        text: "Stratified sampling improves precision primarily because…",
+        options: [
+          "It always reduces the sample size needed to zero variance",
+          "Between-strata variability is removed from the sampling error",
+          "It eliminates the need for weights",
+          "Clusters become internally heterogeneous",
+        ],
+        correctIndex: 1,
+        explanation:
+          "By sampling within homogeneous strata, variation between strata no longer contributes to the standard error — the design effect falls below 1.",
+        domain: D.sampling,
+        sourceRef: "Stratification and design effects",
+      },
+      {
+        text: "A sample of 400 yields a mean of 54 with a standard error of 2. The approximate 95% confidence interval is…",
+        options: ["50 to 58", "52 to 56", "48 to 60", "53 to 55"],
+        correctIndex: 0,
+        explanation:
+          "Approximately mean ± 1.96·SE ≈ 54 ± 3.9, i.e. roughly 50–58.",
+        domain: D.sampling,
+      },
+      {
+        text: "What is the defining property of simple random sampling?",
+        options: [
+          "Every population unit has an equal chance of selection",
+          "Every third unit is chosen systematically",
+          "Units are grouped by geography first",
+          "Respondents volunteer themselves",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Equal probability per unit is the SRS definition; systematic and volunteer designs do not guarantee it.",
+        domain: D.sampling,
+      },
+      {
+        text: "Cluster sampling generally produces less precise estimates than SRS of the same size because…",
+        options: [
+          "Units within clusters tend to be similar (intra-cluster correlation)",
+          "Clusters are always too small",
+          "Weighting is impossible with clusters",
+          "Response rates fall to zero",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Positive intra-cluster correlation means clustered samples carry less information per respondent, inflating the design effect.",
+        domain: D.sampling,
+      },
+      {
+        text: "Survey weights correct primarily for…",
+        options: [
+          "Unequal selection probabilities and differential non-response",
+          "Rounding errors in the questionnaire",
+          "Seasonal price movements",
+          "Software rounding differences",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Weights restore each respondent's representation of the population, compensating for unequal probabilities and calibrated non-response.",
+        domain: D.sampling,
+      },
+      {
+        text: "Doubling a sample size changes the margin of error approximately by a factor of…",
+        options: ["4", "2", "0.71 (√½)", "0.25"],
+        correctIndex: 2,
+        explanation:
+          "Margins shrink with the square root of n: doubling n multiplies precision gain by √(1/2) ≈ 0.71.",
+        domain: D.sampling,
+      },
+    ],
+  },
+  {
+    slug: "data-quality-assurance",
+    title: "Data Quality Assurance in Practice",
+    description:
+      "Editing, validation rules, quality gates and the metadata habits that make datasets trustworthy.",
+    category: D.quality,
+    domain: D.quality,
     difficulty: "Easy",
     estMinutes: 5,
     questions: [
       {
-        text: "Which organelle is known as the powerhouse of the cell?",
-        options: ["Ribosome", "Mitochondrion", "Golgi apparatus", "Lysosome"],
-        correctIndex: 1,
-        explanation:
-          "Mitochondria generate most of the cell's ATP through cellular respiration, earning them the famous nickname.",
-      },
-      {
-        text: "DNA in cells carries information using how many types of nucleotide bases?",
-        options: ["Two", "Three", "Four", "Twenty"],
-        correctIndex: 2,
-        explanation:
-          "DNA encodes information in four bases — adenine, thymine, cytosine and guanine — paired as A–T and C–G.",
-      },
-      {
-        text: "Which structure controls what enters and leaves a cell?",
-        options: ["Cell membrane", "Nucleolus", "Cytoplasm", "Vacuole"],
+        text: "Which check best catches an implausible record during data entry?",
+        options: [
+          "Range and consistency validation at capture time",
+          "Post-publication peer review",
+          "Deleting all outliers automatically",
+          "Increasing the printing quality of forms",
+        ],
         correctIndex: 0,
         explanation:
-          "The selectively permeable cell membrane regulates transport, keeping essential molecules in and harmful ones out.",
+          "Real-time range/consistency edits stop impossible values at source, when the enumerator can still re-query the respondent.",
+        domain: D.quality,
       },
       {
-        text: "Photosynthesis primarily takes place in which organelle?",
-        options: ["Chloroplast", "Nucleus", "Endoplasmic reticulum", "Peroxisome"],
-        correctIndex: 0,
-        explanation:
-          "Chloroplasts contain chlorophyll, which captures light energy to convert CO₂ and water into glucose.",
-      },
-      {
-        text: "What is the process by which cells divide to produce two identical daughter cells?",
-        options: ["Meiosis", "Mitosis", "Apoptosis", "Osmosis"],
+        text: "'Item non-response' refers to…",
+        options: [
+          "A whole questionnaire never returned",
+          "Some questions unanswered within a returned questionnaire",
+          "Items lost in physical storage",
+          "Duplicate records in the file",
+        ],
         correctIndex: 1,
         explanation:
-          "Mitosis produces two genetically identical diploid cells; meiosis produces gametes with half the chromosome number.",
+          "Unit non-response is the missing questionnaire; item non-response is missing fields within it — they need different treatments.",
+        domain: D.quality,
       },
       {
-        text: "Human red blood cells lack which structure when mature?",
-        options: ["Hemoglobin", "Membrane", "Nucleus", "Cytoplasm"],
-        correctIndex: 2,
+        text: "Why should outlier treatment be documented rather than applied silently?",
+        options: [
+          "To satisfy printers",
+          "Because treatment choices materially affect estimates and must be auditable",
+          "Outliers never matter statistically",
+          "Documentation replaces analysis",
+        ],
+        correctIndex: 1,
         explanation:
-          "Mature mammalian red blood cells expel their nucleus to make more room for hemoglobin, maximising oxygen carriage.",
+          "Winsorising vs retaining an extreme value can move a published estimate; transparency preserves reproducibility and trust.",
+        domain: D.quality,
+      },
+      {
+        text: "Metadata describing how a statistic was produced is essential because…",
+        options: [
+          "It makes files larger and safer",
+          "Users cannot correctly interpret data without definitions, coverage and methods",
+          "Computers require metadata to open CSVs",
+          "It substitutes for quality assurance",
+        ],
+        correctIndex: 1,
+        explanation:
+          "Definitions, reference periods and collection methods determine what comparisons are legitimate — metadata carries that context.",
+        domain: D.quality,
+      },
+      {
+        text: "A duplicate record set is best detected using…",
+        options: [
+          "Key-based matching plus similarity checks on near-duplicates",
+          "Visual inspection of printed tables",
+          "Sorting alphabetically only",
+          "Recollecting all data",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Exact keys catch perfect duplicates; fuzzy matching catches re-entered records with small variations.",
+        domain: D.quality,
+      },
+      {
+        text: "Total survey error frameworks remind us that…",
+        options: [
+          "Sampling error is the only error worth managing",
+          "Coverage, measurement, non-response and processing errors also shape accuracy",
+          "Errors cancel out if the sample is large",
+          "Quality cannot be assessed at all",
+        ],
+        correctIndex: 1,
+        explanation:
+          "A huge sample still misleads if the frame misses people, questions measure badly, or processing corrupts values.",
+        domain: D.quality,
       },
     ],
   },
   {
-    slug: "web-internet-fundamentals",
-    title: "Web & Internet Fundamentals",
+    slug: "statistical-analysis-foundations",
+    title: "Statistical Analysis Foundations",
     description:
-      "Protocols, browsers and the plumbing behind every click — test your grasp of how the web actually works.",
-    category: "Technology",
+      "Description, inference and the reasoning that connects a table to a defensible conclusion.",
+    category: D.analysis,
+    domain: D.analysis,
+    difficulty: "Medium",
+    estMinutes: 6,
+    questions: [
+      {
+        text: "The median is preferred over the mean when a distribution is…",
+        options: [
+          "Perfectly symmetric",
+          "Strongly right-skewed, such as income",
+          "Bimodal by definition",
+          "Constant everywhere",
+        ],
+        correctIndex: 1,
+        explanation:
+          "The median resists the pull of extreme values; for skewed distributions like income it represents the typical unit better.",
+        domain: D.analysis,
+      },
+      {
+        text: "A p-value of 0.03 in a hypothesis test means…",
+        options: [
+          "There is a 3% chance the null hypothesis is true",
+          "Data this extreme would occur ~3% of the time if the null were true",
+          "The effect size is 3%",
+          "The result is 97% certain to replicate",
+        ],
+        correctIndex: 1,
+        explanation:
+          "The p-value is P(data ≥ observed | null true) — a statement about the data under the null, not about the null's truth.",
+        domain: D.analysis,
+      },
+      {
+        text: "Correlation between two variables alone establishes…",
+        options: [
+          "Causation from X to Y",
+          "Association, with direction unknown",
+          "Nothing at any sample size",
+          "That a confounder exists",
+        ],
+        correctIndex: 1,
+        explanation:
+          "Correlation quantifies co-movement; causal claims need design or assumptions that rule out confounding and reverse causality.",
+        domain: D.analysis,
+      },
+      {
+        text: "With survey data, why should analysis incorporate the design (weights, strata, clusters)?",
+        options: [
+          "It makes results look smoother",
+          "Ignoring design typically understates standard errors and biases point estimates",
+          "Software refuses to run otherwise",
+          "It removes the need for confidence intervals",
+        ],
+        correctIndex: 1,
+        explanation:
+          "Naïve i.i.d. assumptions on complex-sample data produce too-narrow intervals; design-based analysis restores valid uncertainty.",
+        domain: D.analysis,
+      },
+      {
+        text: "Seasonal adjustment of a monthly series exists to…",
+        options: [
+          "Remove regular seasonal patterns so underlying movement is visible",
+          "Eliminate irregular shocks like strikes",
+          "Convert nominal series to real terms",
+          "Make annual totals match monthly sums",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Adjustment strips predictable seasonal components; irregular events and trend remain for interpretation.",
+        domain: D.analysis,
+      },
+      {
+        text: "An estimate with a wide confidence interval is best described as…",
+        options: [
+          "Precise but biased",
+          "Imprecise — the data are consistent with a broad range of values",
+          "Certainly wrong",
+          "Free of non-sampling error",
+        ],
+        correctIndex: 1,
+        explanation:
+          "Interval width expresses precision; it says nothing about bias, which lives outside the sampling-error framework.",
+        domain: D.analysis,
+      },
+    ],
+  },
+  {
+    slug: "visualising-statistical-data",
+    title: "Visualising Statistical Data",
+    description:
+      "Encodings, scales and chart choice — presenting numbers so decisions get easier, not harder.",
+    category: D.viz,
+    domain: D.viz,
     difficulty: "Easy",
     estMinutes: 5,
     questions: [
       {
-        text: "What does HTTPS add on top of HTTP?",
+        text: "Truncating the y-axis of a bar chart is discouraged mainly because…",
         options: [
-          "Faster routing",
-          "Encryption via TLS",
-          "Image compression",
-          "Ad blocking",
+          "Bars encode value through length, so truncation exaggerates differences visually",
+          "It makes charts smaller",
+          "Line charts forbid it",
+          "Printers clip the axis",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Length is the encoding channel for bars; a truncated baseline breaks the proportionality readers rely on.",
+        domain: D.viz,
+      },
+      {
+        text: "For showing the composition of a single total across many categories (say 12), the clearest choice is usually…",
+        options: [
+          "A pie chart with 12 slices",
+          "A sorted horizontal bar chart",
+          "A radar chart",
+          "A word cloud",
         ],
         correctIndex: 1,
         explanation:
-          "HTTPS wraps HTTP traffic in TLS encryption, protecting data integrity and confidentiality between browser and server.",
+          "Humans judge lengths far better than angles; sorted bars keep twelve categories readable and comparable.",
+        domain: D.viz,
       },
       {
-        text: "Which protocol translates domain names into IP addresses?",
-        options: ["FTP", "SMTP", "DNS", "SSH"],
-        correctIndex: 2,
-        explanation:
-          "The Domain Name System resolves human-readable names like example.com into the numeric addresses machines route to.",
-      },
-      {
-        text: "In web development, what is the DOM?",
+        text: "A dual-axis chart of unrelated indices can mislead because…",
         options: [
-          "A database of websites",
-          "The browser's in-memory document tree",
-          "A CSS preprocessor",
-          "A hosting service",
+          "Axis scaling choices manufacture visual correlations",
+          "Two lines are always confusing",
+          "Colours carry no meaning",
+          "Legends hide information",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Arbitrary axis ranges let almost any two series 'move together'; independent scales invite spurious stories.",
+        domain: D.viz,
+      },
+      {
+        text: "Perceptually uniform colour scales (e.g. viridis) matter in choropleth maps because…",
+        options: [
+          "Equal data steps appear as equal perceptual steps",
+          "They print faster",
+          "They use fewer colours overall",
+          "They avoid all cultural associations",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Uniform ramps prevent banding illusions, so map readers read rates rather than artefacts of the palette.",
+        domain: D.viz,
+      },
+      {
+        text: "When labelling a chart for publication, the reference period should be…",
+        options: [
+          "Omitted to save space",
+          "Stated clearly, since the same series label can describe different periods",
+          "Left to the reader's assumption",
+          "Mentioned only in footnotes of other documents",
         ],
         correctIndex: 1,
         explanation:
-          "The Document Object Model is the browser's live tree representation of a page, which scripts read and manipulate.",
+          "Without the reference period a number is uninterpretable; explicit dating prevents misuse out of context.",
+        domain: D.viz,
       },
       {
-        text: "Which HTTP status code signals 'Not Found'?",
-        options: ["200", "301", "404", "500"],
-        correctIndex: 2,
-        explanation:
-          "404 tells the client the requested resource doesn't exist at this address; 500 indicates a server-side error instead.",
-      },
-      {
-        text: "What is the primary role of a web browser's cache?",
+        text: "Small-multiple displays help compare many subgroups because…",
         options: [
-          "Store passwords",
-          "Speed up repeat visits by reusing assets",
-          "Block pop-ups",
-          "Compress downloads",
+          "Each panel shares identical axes, enabling honest visual comparison",
+          "They remove the need for numbers",
+          "Smaller charts render quicker",
+          "Trends become causal",
         ],
-        correctIndex: 1,
+        correctIndex: 0,
         explanation:
-          "Caching keeps recently fetched images, stylesheets and scripts locally so subsequent visits skip re-downloading them.",
-      },
-      {
-        text: "IPv4 addresses are made up of how many bits?",
-        options: ["16", "32", "64", "128"],
-        correctIndex: 1,
-        explanation:
-          "IPv4 uses 32-bit addresses (about 4.3 billion), whereas IPv6 expanded to 128 bits to avoid exhaustion.",
+          "Common scales across repeated panels turn a wall of series into scannable, comparable evidence.",
+        domain: D.viz,
       },
     ],
   },
   {
-    slug: "ai-ml-basics",
-    title: "AI & Machine Learning Basics",
+    slug: "python-sql-for-statistics",
+    title: "Python & SQL for Statistical Work",
     description:
-      "Models, training and inference — the vocabulary and intuition behind modern intelligent systems.",
-    category: "Technology",
+      "Practical computing: joins, group-bys, vectorised checks and reproducible scripts for official data.",
+    category: D.computing,
+    domain: D.computing,
     difficulty: "Medium",
     estMinutes: 6,
     questions: [
       {
-        text: "In machine learning, what is 'training' a model?",
+        text: "In pandas, df.groupby('state')['income'].mean() computes…",
         options: [
-          "Writing its source code",
-          "Adjusting parameters from examples",
-          "Encrypting its outputs",
-          "Deploying it to production",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Training iteratively adjusts model parameters so predictions on known examples improve — the model 'learns' patterns from data.",
-      },
-      {
-        text: "Which type of learning uses labelled data?",
-        options: ["Unsupervised", "Supervised", "Reinforcement", "Transfer"],
-        correctIndex: 1,
-        explanation:
-          "Supervised learning fits functions to input–output pairs where the correct answer (label) is provided for each example.",
-      },
-      {
-        text: "'Overfitting' means a model…",
-        options: [
-          "Performs well on training data but poorly on new data",
-          "Is too simple to capture patterns",
-          "Trains too slowly",
-          "Uses too little memory",
+          "Mean income per state",
+          "Overall income mean ignoring state",
+          "Income count per state",
+          "A merged table of states",
         ],
         correctIndex: 0,
         explanation:
-          "An overfit model memorises noise in its training set rather than generalisable structure, so it fails on unseen cases.",
+          "Group-by splits rows by state, aggregates income with the mean, and returns one value per group.",
+        domain: D.computing,
       },
       {
-        text: "A neural network's 'neurons' are best described as…",
+        text: "A LEFT JOIN keeps…",
         options: [
-          "Simulated biological brain cells",
-          "Simple units computing weighted sums plus an activation",
-          "Database records",
-          "Graphics card cores",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Each artificial neuron multiplies inputs by weights, sums them, adds bias, and passes the result through a non-linear activation function.",
-      },
-      {
-        text: "Large language models like GPT are trained primarily to predict…",
-        options: [
-          "Images from captions",
-          "The next token in a sequence",
-          "Website rankings",
-          "Database queries",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Autoregressive LLMs learn by predicting the next token given preceding context — scale this up and coherent generation emerges.",
-      },
-      {
-        text: "Which task is a classic unsupervised learning problem?",
-        options: [
-          "Spam classification",
-          "House price prediction",
-          "Customer segmentation via clustering",
-          "Face verification",
-        ],
-        correctIndex: 2,
-        explanation:
-          "Clustering groups unlabelled data by similarity — no ground-truth labels are needed, which defines unsupervised learning.",
-      },
-    ],
-  },
-  {
-    slug: "modern-world-1900-1950",
-    title: "The Modern World: 1900–1950",
-    description:
-      "Half a century that compressed revolution, depression and world war into living memory.",
-    category: "History",
-    difficulty: "Medium",
-    estMinutes: 6,
-    questions: [
-      {
-        text: "In which year did World War I begin?",
-        options: ["1912", "1914", "1916", "1918"],
-        correctIndex: 1,
-        explanation:
-          "The assassination of Archduke Franz Ferdinand in June 1914 triggered the July Crisis and general war by August.",
-      },
-      {
-        text: "The Treaty of Versailles formally ended which conflict?",
-        options: [
-          "Franco-Prussian War",
-          "World War I",
-          "Russo-Japanese War",
-          "World War II",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Signed in 1919, the treaty imposed heavy reparations and territorial losses on Germany — widely seen as seeding WWII grievances.",
-      },
-      {
-        text: "Who was the first person to walk on the Moon? (Hint: within this era's space-race aftermath)",
-        options: ["Yuri Gagarin", "Buzz Aldrin", "Neil Armstrong", "John Glenn"],
-        correctIndex: 2,
-        explanation:
-          "Neil Armstrong stepped onto the lunar surface on 20 July 1969 during Apollo 11; Gagarin was first in orbit, not on the Moon.",
-      },
-      {
-        text: "The Great Depression began with the Wall Street crash in which year?",
-        options: ["1919", "1925", "1929", "1933"],
-        correctIndex: 2,
-        explanation:
-          "The October 1929 collapse triggered a decade of global economic contraction and mass unemployment.",
-      },
-      {
-        text: "Which country was the first to use nuclear weapons in war?",
-        options: ["Germany", "Japan", "Soviet Union", "United States"],
-        correctIndex: 3,
-        explanation:
-          "The United States dropped atomic bombs on Hiroshima and Nagasaki in August 1945, ending World War II.",
-      },
-      {
-        text: "India and Pakistan gained independence from British rule in which year?",
-        options: ["1945", "1947", "1950", "1952"],
-        correctIndex: 1,
-        explanation:
-          "The Indian Independence Act took effect on 15 August 1947, partitioning British India into two dominions.",
-      },
-    ],
-  },
-  {
-    slug: "rivers-peaks-plates",
-    title: "Rivers, Peaks & Plates",
-    description:
-      "Landforms, borders and the tectonic forces that build them — a journey across the map.",
-    category: "Geography",
-    difficulty: "Medium",
-    estMinutes: 5,
-    questions: [
-      {
-        text: "Which is the longest river in the world by most conventional measures?",
-        options: ["Amazon", "Nile", "Yangtze", "Mississippi"],
-        correctIndex: 1,
-        explanation:
-          "The Nile (~6,650 km) is traditionally longest, though some studies measuring the Amazon's full course dispute the title.",
-      },
-      {
-        text: "Mount Everest sits on the border between Nepal and which other country/region?",
-        options: ["India", "Bhutan", "China (Tibet)", "Pakistan"],
-        correctIndex: 2,
-        explanation:
-          "Everest straddles the Nepal–Tibet (China) border in the Mahalangur Himal section of the Himalayas.",
-      },
-      {
-        text: "Which desert is the largest hot desert on Earth?",
-        options: ["Gobi", "Kalahari", "Sahara", "Atacama"],
-        correctIndex: 2,
-        explanation:
-          "The Sahara spans roughly 9.2 million km² across North Africa — nearly the size of the United States.",
-      },
-      {
-        text: "The Ring of Fire is associated with which geological feature?",
-        options: [
-          "Subduction zones and volcanism around the Pacific",
-          "A desert belt across Africa",
-          "Mid-Atlantic ridge vents only",
-          "Antarctic ice sheets",
+          "All rows from the left table with matches from the right (NULL where absent)",
+          "Only matched rows from both tables",
+          "All rows from both tables stacked",
+          "Only unmatched rows",
         ],
         correctIndex: 0,
         explanation:
-          "Pacific plate subduction produces the dense concentration of earthquakes and volcanoes ringing the ocean basin.",
+          "LEFT JOIN preserves every left row, filling unmatched right columns with NULLs — essential for preserving frames.",
+        domain: D.computing,
       },
       {
-        text: "Which strait separates Asia from North America at its closest point?",
+        text: "Vectorised operations are preferred over Python loops on large arrays because…",
         options: [
-          "Strait of Malacca",
-          "Bering Strait",
-          "Strait of Hormuz",
-          "Bass Strait",
+          "They push work into optimised C-level routines over contiguous memory",
+          "Loops are forbidden by the language",
+          "Vectors store less data",
+          "It avoids writing functions",
         ],
-        correctIndex: 1,
+        correctIndex: 0,
         explanation:
-          "The Bering Strait lies between Siberia and Alaska, about 82 km wide at its narrowest.",
+          "NumPy/pandas vectorisation executes compiled loops once instead of interpreting thousands of Python-level iterations.",
+        domain: D.computing,
       },
       {
-        text: "What is the world's largest ocean by surface area?",
-        options: ["Atlantic", "Indian", "Arctic", "Pacific"],
-        correctIndex: 3,
+        text: "The main benefit of a scripted (vs manual spreadsheet) validation pipeline is…",
+        options: [
+          "Reproducibility: the same checks rerun identically on updated data",
+          "Scripts are shorter than spreadsheets",
+          "Manual methods have no audit trail at all",
+          "It avoids documentation",
+        ],
+        correctIndex: 0,
         explanation:
-          "The Pacific covers about 165 million km² — larger than all landmasses combined.",
+          "Code becomes executable documentation — every edit, range check and join reruns deterministically on the next round.",
+        domain: D.computing,
+      },
+      {
+        text: "In SQL, WHERE differs from HAVING because…",
+        options: [
+          "WHERE filters rows before aggregation; HAVING filters groups after",
+          "They are interchangeable aliases",
+          "HAVING applies only to text columns",
+          "WHERE runs after GROUP BY",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Filter order matters: WHERE discards rows pre-aggregation; HAVING conditions apply to aggregated group results.",
+        domain: D.computing,
+      },
+      {
+        text: "Handling missing values with dropna() without inspection risks…",
+        options: [
+          "Silently biasing results if missingness is not completely random",
+          "Losing column names",
+          "Converting strings to floats",
+          "Nothing; it is always safe",
+        ],
+        correctIndex: 0,
+        explanation:
+          "If missingness correlates with the outcome, listwise deletion skews estimates — diagnose the mechanism first.",
+        domain: D.computing,
       },
     ],
   },
   {
-    slug: "markets-and-money",
-    title: "Markets & Money",
+    slug: "official-statistics-nss",
+    title: "Official Statistics & the National System",
     description:
-      "Supply, demand, interest rates and the mechanics of capital — sharper than average.",
-    category: "Business",
+      "Standards, classifications, dissemination principles and the institutional architecture of Indian official statistics.",
+    category: D.official,
+    domain: D.official,
     difficulty: "Hard",
-    estMinutes: 7,
+    estMinutes: 6,
     questions: [
       {
-        text: "If demand rises while supply stays constant, equilibrium price generally…",
-        options: ["Falls", "Stays flat", "Rises", "Becomes undefined"],
-        correctIndex: 2,
-        explanation:
-          "Higher demand shifts the curve outward along a fixed supply curve, raising both equilibrium price and quantity.",
-      },
-      {
-        text: "What does GDP measure?",
+        text: "The UN Fundamental Principles of Official Statistics oblige national systems to…",
         options: [
-          "Total wealth of citizens",
-          "Market value of final goods and services produced",
-          "Government spending only",
-          "Corporate profits nationwide",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Gross Domestic Product sums the market value of all final goods and services produced within a country over a period.",
-      },
-      {
-        text: "Central banks typically fight high inflation by…",
-        options: [
-          "Cutting interest rates",
-          "Raising interest rates",
-          "Printing more money",
-          "Lowering reserve requirements",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Raising policy rates makes borrowing costlier, cooling demand and easing price pressure — the standard inflation countermeasure.",
-      },
-      {
-        text: "Opportunity cost refers to…",
-        options: [
-          "Accounting fees incurred",
-          "The value of the next-best forgone alternative",
-          "Interest on debt",
-          "Sunk costs already spent",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Every choice sacrifices the best alternative use of the same resources — that sacrificed value is the opportunity cost.",
-      },
-      {
-        text: "In finance, diversification reduces…",
-        options: [
-          "Expected returns to zero",
-          "Unsystematic (specific) risk",
-          "Market beta",
-          "Liquidity",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Holding uncorrelated assets smooths out company- or sector-specific shocks; systematic market risk remains.",
-      },
-      {
-        text: "A company's gross margin is calculated as…",
-        options: [
-          "(Revenue − COGS) / Revenue",
-          "Net income / Total assets",
-          "EBITDA / Debt",
-          "Dividends / Share price",
+          "Compile statistics impartially and release them according to scientific standards",
+          "Publish only favourable indicators",
+          "Keep all microdata permanently secret with no exceptions",
+          "Delegate methodology to data subjects",
         ],
         correctIndex: 0,
         explanation:
-          "Gross margin shows what fraction of revenue survives after direct production costs, before operating expenses.",
+          "Impartiality, scientific rigour, confidentiality and equal access define the principles adopted by the UN Statistical Commission.",
+        domain: D.official,
+        sourceRef: "UN Fundamental Principles",
+      },
+      {
+        text: "Why do statistical agencies adopt standard classifications such as NIC/NSSO industry codes?",
+        options: [
+          "Comparability across datasets, time and international benchmarks",
+          "Shorter questionnaires are cheaper to print",
+          "Classification codes replace estimation",
+          "They eliminate sampling error",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Common classifications make outputs linkable and comparable — the backbone of coherent statistics.",
+        domain: D.official,
+      },
+      {
+        text: "A 'revisions policy' for a headline index exists to…",
+        options: [
+          "Balance timeliness against accuracy transparently as better data arrive",
+          "Hide initial mistakes from users",
+          "Allow arbitrary political adjustment",
+          "Avoid publishing advance estimates",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Advance estimates trade precision for timeliness; a published revision schedule keeps that trade-off accountable.",
+        domain: D.official,
+      },
+      {
+        text: "Dissemination under an open-data approach means…",
+        options: [
+          "Machine-readable releases with clear licences and documentation",
+          "PDF-only press notes",
+          "Data shared only on written request",
+          "Aggregates published without metadata",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Openness implies usable formats, licensing clarity and metadata — not merely public availability.",
+        domain: D.official,
+      },
+      {
+        text: "MoSPI's role within India's statistical system is best characterised as…",
+        options: [
+          "Nodal ministry setting standards and coordinating the system's statistical activities",
+          "Sole collector of all administrative data",
+          "A regulator of private polling companies",
+          "An archive with no standard-setting duties",
+        ],
+        correctIndex: 0,
+        explanation:
+          "MoSPI (through NSO/CSO) sets standards, coordinates central statistics and compiles national accounts and key surveys.",
+        domain: D.official,
+      },
+      {
+        text: "SDG indicator monitoring requires national statistical systems to…",
+        options: [
+          "Align concepts and disaggregation with internationally agreed metadata",
+          "Report only indicators already collected",
+          "Substitute administrative data for all surveys",
+          "Estimate indicators without documentation",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Global monitoring depends on agreed metadata and disaggregation standards being implemented nationally.",
+        domain: D.official,
       },
     ],
   },
   {
-    slug: "cinema-the-classics",
-    title: "Cinema: The Classics",
+    slug: "governance-and-ethics",
+    title: "Data Governance & Statistical Ethics",
     description:
-      "Directors, milestones and lines you can quote — for anyone who takes film history seriously.",
-    category: "Entertainment",
+      "Confidentiality, disclosure control, informed consent and the stewardship duties of a statistical office.",
+    category: D.governance,
+    domain: D.governance,
     difficulty: "Easy",
     estMinutes: 5,
     questions: [
       {
-        text: "Which film features the line “Here's looking at you, kid”?",
-        options: ["Casablanca", "Citizen Kane", "Gone with the Wind", "The Apartment"],
-        correctIndex: 0,
-        explanation:
-          "Humphrey Bogart's Rick says it to Ilsa in Casablanca (1942) — among cinema's most quoted lines.",
-      },
-      {
-        text: "Who directed the 1994 masterpiece Pulp Fiction?",
+        text: "Statistical confidentiality fundamentally protects…",
         options: [
-          "Martin Scorsese",
-          "Quentin Tarantino",
-          "Coen Brothers",
-          "David Fincher",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Tarantino's nonlinear crime anthology won the Palme d'Or and redefined 90s independent cinema.",
-      },
-      {
-        text: "Which film won the first Academy Award for Best Animated Feature?",
-        options: [
-          "Toy Story",
-          "Shrek",
-          "Spirited Away",
-          "Monsters, Inc.",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Shrek took the inaugural award in 2002 (for films of 2001); Spirited Away won the following year.",
-      },
-      {
-        text: "Alfred Hitchcock's Psycho (1960) is famous for its shower scene scored by…",
-        options: [
-          "Ennio Morricone",
-          "Bernard Herrmann",
-          "John Williams",
-          "Hans Zimmer",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Herrmann's shrieking staccato strings made the scene iconic — Hitchcock originally considered playing it without music.",
-      },
-      {
-        text: "The first feature-length film with synchronised dialogue was…",
-        options: [
-          "The Jazz Singer",
-          "Metropolis",
-          "Wings",
-          "Sunrise",
+          "The identity and attributes of individual respondents from use for non-statistical purposes",
+          "Government departments' internal drafts",
+          "Published aggregate tables",
+          "Enumerator identities",
         ],
         correctIndex: 0,
         explanation:
-          "The Jazz Singer (1927) ushered in the sound era with its Vitaphone talking sequences.",
+          "Responses may be used only for statistics — never for enforcement, taxation or identification of the provider.",
+        domain: D.governance,
       },
       {
-        text: "Parasite (2019) made history as the first Best Picture winner from which country?",
-        options: ["Japan", "China", "South Korea", "France"],
-        correctIndex: 2,
+        text: "A published table shows a cell based on a single respondent. The standard safeguard is…",
+        options: [
+          "Primary suppression (or threshold rules) of the cell",
+          "Publishing it with a footnote",
+          "Rounding the percentage only",
+          "Removing the entire table from the release",
+        ],
+        correctIndex: 0,
         explanation:
-          "Bong Joon-ho's Parasite became the first non-English-language film to win Hollywood's top prize.",
+          "Small cells risk re-identification; suppression thresholds (or perturbation) protect contributors.",
+        domain: D.governance,
+      },
+      {
+        text: "'Informed consent' in survey participation requires that respondents…",
+        options: [
+          "Know the purpose, voluntariness and uses of the information they provide",
+          "Sign a legal waiver of all rights",
+          "Are notified after data are published",
+          "Consent only once for all future surveys",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Consent must be informed and specific: purpose, voluntary nature and consequences explained before collection.",
+        domain: D.governance,
+      },
+      {
+        text: "Sharing identified microdata with an external marketing firm would violate…",
+        options: [
+          "The exclusively-statistical-use principle of official statistics",
+          "Open-data licensing",
+          "Revision policies",
+          "Nothing, if aggregated afterwards",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Statistical authority rests on the promise that responses serve statistics only; commercial reuse of identified data breaks it.",
+        domain: D.governance,
+      },
+      {
+        text: "Differential privacy-style protection techniques exist to…",
+        options: [
+          "Bound the influence any single contributor can have on released outputs",
+          "Compress databases efficiently",
+          "Speed up query execution",
+          "Improve estimate accuracy",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Formal privacy adds calibrated noise so no individual's presence meaningfully changes published results.",
+        domain: D.governance,
+      },
+      {
+        text: "Good data stewardship within a division includes…",
+        options: [
+          "Access controls, retention schedules and documented lineage for datasets",
+          "Emailing files informally for speed",
+          "Keeping methods undocumented to preserve secrecy",
+          "Unlimited access for all staff",
+        ],
+        correctIndex: 0,
+        explanation:
+          "Governance means controlled access, defined retention and traceable lineage — accountability by design.",
+        domain: D.governance,
       },
     ],
   },
-  {
-    slug: "the-olympic-record",
-    title: "The Olympic Record",
-    description:
-      "Venues, legends and moments that defined the Games — from Athens 1896 to today.",
-    category: "Sports",
-    difficulty: "Easy",
-    estMinutes: 5,
-    questions: [
-      {
-        text: "Where were the first modern Olympic Games held in 1896?",
-        options: ["Paris", "Athens", "London", "Rome"],
-        correctIndex: 1,
-        explanation:
-          "Athens hosted the revival of the Games, honouring their ancient Greek origins, under Pierre de Coubertin's IOC.",
-      },
-      {
-        text: "How often are the Summer Olympics traditionally held?",
-        options: ["Every 2 years", "Every 3 years", "Every 4 years", "Every 5 years"],
-        correctIndex: 2,
-        explanation:
-          "The four-year interval between Games is called an Olympiad, echoing the ancient Greek reckoning.",
-      },
-      {
-        text: "Usain Bolt set the 100 m world record at 9.58 seconds in which year?",
-        options: ["2004", "2008", "2009", "2012"],
-        correctIndex: 2,
-        explanation:
-          "Bolt ran 9.58 at the 2009 World Championships in Berlin, shaving 0.11 off his own Olympic record from Beijing 2008.",
-      },
-      {
-        text: "The five interlocking Olympic rings represent…",
-        options: [
-          "Five sponsors",
-          "Five continents united by sport",
-          "Five founding sports",
-          "Five ancient city-states",
-        ],
-        correctIndex: 1,
-        explanation:
-          "Designed in 1913, the rings symbolise the union of Africa, the Americas, Asia, Europe and Oceania.",
-      },
-      {
-        text: "Which country has won the most total Olympic medals overall?",
-        options: [
-          "United States",
-          "China",
-          "Russia / Soviet Union",
-          "Great Britain",
-        ],
-        correctIndex: 0,
-        explanation:
-          "The United States leads the all-time medal table with well over 3,000 cumulative medals across Summer and Winter Games.",
-      },
-      {
-        text: "The marathon distance of 42.195 km was standardised in which century?",
-        options: [
-          "Ancient Greece",
-          "18th century",
-          "20th century",
-          "It was never standardised",
-        ],
-        correctIndex: 2,
-        explanation:
-          "The odd figure comes from the 1908 London route to Windsor Castle; the IAAF fixed 42.195 km as standard in 1921.",
-      },
-    ],
-  },
+  // ---- General aptitude (not mapped to a competency domain) ----
   {
     slug: "mixed-bag-vol-1",
     title: "Mixed Bag Vol. 1",
     description:
-      "Six deceptively varied questions spanning science, culture and the everyday — a balanced workout.",
-    category: "General Knowledge",
+      "Six deceptively varied questions spanning science, culture and the everyday — a balanced warm-up.",
+    category: "General Aptitude",
     difficulty: "Medium",
     estMinutes: 5,
     questions: [
@@ -640,43 +776,37 @@ export const QUIZZES: SeedQuiz[] = [
         text: "What is the chemical symbol for gold?",
         options: ["Go", "Gd", "Au", "Ag"],
         correctIndex: 2,
-        explanation:
-          "Au comes from aurum, Latin for gold; Ag is silver (argentum).",
+        explanation: "Au comes from aurum, Latin for gold; Ag is silver (argentum).",
       },
       {
         text: "How many keys does a standard full-size piano have?",
         options: ["76", "84", "88", "96"],
         correctIndex: 2,
-        explanation:
-          "Since the late 1800s, pianos have standardised on 88 keys — 52 white and 36 black.",
+        explanation: "Since the late 1800s pianos have standardised on 88 keys — 52 white and 36 black.",
       },
       {
-        text: "Which planet has the most moons confirmed in our solar system?",
+        text: "Which planet has the most confirmed moons in our solar system?",
         options: ["Jupiter", "Saturn", "Uranus", "Neptune"],
         correctIndex: 1,
-        explanation:
-          "Saturn pulled ahead with 140+ confirmed moons after 2023 discoveries, overtaking Jupiter's 95.",
+        explanation: "Saturn pulled ahead with 140+ confirmed moons after 2023 discoveries, overtaking Jupiter's 95.",
       },
       {
         text: "The Great Barrier Reef lies off the coast of which country?",
         options: ["Brazil", "Indonesia", "Australia", "Philippines"],
         correctIndex: 2,
-        explanation:
-          "Australia's north-east coast hosts the reef — the largest living structure on Earth, visible from orbit.",
+        explanation: "Australia's north-east coast hosts the reef — the largest living structure on Earth.",
       },
       {
         text: "Who wrote the dystopian novel Nineteen Eighty-Four?",
         options: ["Aldous Huxley", "George Orwell", "Ray Bradbury", "H.G. Wells"],
         correctIndex: 1,
-        explanation:
-          "Eric Arthur Blair, writing as George Orwell, published it in 1949; Huxley wrote Brave New World.",
+        explanation: "Eric Arthur Blair wrote as George Orwell; Huxley wrote Brave New World.",
       },
       {
         text: "In human anatomy, what is the body's largest organ?",
         options: ["Liver", "Brain", "Skin", "Lungs"],
         correctIndex: 2,
-        explanation:
-          "Skin is the largest organ by area and weight, averaging around 2 m² in adults.",
+        explanation: "Skin averages around 2 m² in adults — largest by area and weight.",
       },
     ],
   },
@@ -684,8 +814,8 @@ export const QUIZZES: SeedQuiz[] = [
     slug: "quickfire-general-knowledge",
     title: "Quickfire General Knowledge",
     description:
-      "Fast facts, zero fluff — a perfect first quiz or a warm-up before something heavier.",
-    category: "General Knowledge",
+      "Fast facts, zero fluff — a perfect first round or a warm-up before something heavier.",
+    category: "General Aptitude",
     difficulty: "Easy",
     estMinutes: 4,
     questions: [
@@ -693,48 +823,37 @@ export const QUIZZES: SeedQuiz[] = [
         text: "What colour do you get by mixing blue and yellow paint?",
         options: ["Green", "Purple", "Orange", "Brown"],
         correctIndex: 0,
-        explanation:
-          "Blue and yellow pigments absorb complementary wavelengths, leaving green as the dominant reflected colour.",
+        explanation: "Blue and yellow pigments absorb complementary wavelengths, leaving green dominant.",
       },
       {
         text: "How many minutes are in a full day?",
         options: ["1,200", "1,440", "1,800", "2,400"],
         correctIndex: 1,
-        explanation:
-          "24 hours × 60 minutes = 1,440 minutes per day.",
+        explanation: "24 hours × 60 minutes = 1,440.",
       },
       {
         text: "Which is the tallest animal in the world?",
         options: ["Elephant", "Giraffe", "Ostrich", "Moose"],
         correctIndex: 1,
-        explanation:
-          "Adult giraffes reach 5–6 metres tall, thanks largely to a half-metre neck and long forelegs.",
+        explanation: "Adult giraffes reach 5–6 metres thanks to a half-metre neck and long forelegs.",
       },
       {
         text: "What does 'www' stand for in a website address?",
-        options: [
-          "Wide World Web",
-          "World Wide Web",
-          "Web Wide Wire",
-          "Wireless World Web",
-        ],
+        options: ["Wide World Web", "World Wide Web", "Web Wide Wire", "Wireless World Web"],
         correctIndex: 1,
-        explanation:
-          "Tim Berners-Lee named his 1989 hypertext system the World Wide Web at CERN.",
+        explanation: "Tim Berners-Lee named his 1989 hypertext system the World Wide Web at CERN.",
       },
       {
-        text: "Which fruit contains its seeds on the outside?",
+        text: "Which fruit carries its seeds on the outside?",
         options: ["Kiwi", "Strawberry", "Plum", "Cherry"],
         correctIndex: 1,
-        explanation:
-          "Those 'seeds' are actually tiny achenes — dry fruits themselves — perched on the strawberry's exterior.",
+        explanation: "Those 'seeds' are tiny achenes — dry fruits themselves — perched on the exterior.",
       },
       {
         text: "How many sides does a hexagon have?",
         options: ["Five", "Six", "Seven", "Eight"],
         correctIndex: 1,
-        explanation:
-          "Hexa- is Greek for six; hexagons tile perfectly, which is why honeycombs use them.",
+        explanation: "Hexa- is Greek for six; hexagons tile perfectly, which honeycombs exploit.",
       },
     ],
   },

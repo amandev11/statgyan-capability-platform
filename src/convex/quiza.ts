@@ -1,16 +1,33 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { CATEGORIES, QUIZZES } from "./content";
+import { DOMAIN_CATALOG, QUIZZES } from "./content";
 
 // ---------------------------------------------------------------------------
-// Seeding — idempotent; inserts catalogue once on first call.
+// Seeding — idempotent; resets when the taxonomy changes.
 // ---------------------------------------------------------------------------
 
 export const ensureSeeded = mutation({
   handler: async (ctx) => {
     const existing = await ctx.db.query("quizzes").first();
-    if (existing) return;
+    if (existing) {
+      // Taxonomy guard: old Quiza catalogue used categories like "Science".
+      const isNew = QUIZZES.some((q) => q.slug === existing.slug);
+      if (isNew) return;
+      // Purge legacy catalogue + dependent attempts, then reseed.
+      for (const q of await ctx.db.query("quizzes").collect()) {
+        for (const question of await ctx.db
+          .query("questions")
+          .withIndex("by_quiz", (x) => x.eq("quizId", q._id))
+          .collect()) {
+          await ctx.db.delete(question._id);
+        }
+        await ctx.db.delete(q._id);
+      }
+      for (const a of await ctx.db.query("attempts").collect()) {
+        await ctx.db.delete(a._id);
+      }
+    }
     for (const quiz of QUIZZES) {
       const { questions, ...meta } = quiz;
       const quizId = await ctx.db.insert("quizzes", meta);
@@ -29,8 +46,8 @@ export const ensureSeeded = mutation({
 // Catalogue
 // ---------------------------------------------------------------------------
 
-export const listCategories = query({
-  handler: async () => CATEGORIES,
+export const listDomains = query({
+  handler: async () => DOMAIN_CATALOG,
 });
 
 export const listQuizzes = query({
@@ -46,6 +63,7 @@ export const listQuizzes = query({
     const counts = new Map<string, number>();
     const mineBest = new Map<string, number>();
     for (const a of allAttempts) {
+      if (!a.quizId) continue;
       counts.set(a.quizId, (counts.get(a.quizId) ?? 0) + 1);
       if (userId && a.userId === userId) {
         mineBest.set(a.quizId, Math.max(mineBest.get(a.quizId) ?? -1, a.scorePct));
@@ -87,19 +105,51 @@ export const getAttempt = query({
   handler: async (ctx, { id }) => {
     const attempt = await ctx.db.get(id);
     if (!attempt) return null;
-    // Include the full question set so the results page can render review.
-    const questions = await ctx.db
-      .query("questions")
-      .withIndex("by_quiz", (q) => q.eq("quizId", attempt.quizId))
-      .collect();
-    questions.sort((a, b) => a.order - b.order);
-    return { attempt, questions };
+
+    // Seeded catalogue attempt
+    if (attempt.quizId) {
+      const questions = await ctx.db
+        .query("questions")
+        .withIndex("by_quiz", (q) => q.eq("quizId", attempt.quizId!))
+        .collect();
+      questions.sort((a, b) => a.order - b.order);
+      return {
+        attempt,
+        questions: questions.map((q) => ({
+          text: q.text,
+          options: q.options,
+          correctIndex: q.correctIndex,
+          explanation: q.explanation,
+          domain: q.domain ?? "",
+          difficulty: "Medium",
+          sourceRef: q.sourceRef ?? "",
+        })),
+      };
+    }
+
+    // AI-generated assessment attempt
+    if (attempt.assessmentId) {
+      const assessment = await ctx.db.get(attempt.assessmentId);
+      if (!assessment) return null;
+      return { attempt, questions: assessment.questions };
+    }
+
+    return null;
   },
 });
 
 // ---------------------------------------------------------------------------
 // Attempts & stats
 // ---------------------------------------------------------------------------
+
+function grade(questions: { correctIndex: number }[], answers: number[]) {
+  let correct = 0;
+  for (let i = 0; i < questions.length; i++) {
+    if (answers[i] === questions[i].correctIndex) correct++;
+  }
+  const total = Math.max(questions.length, 1);
+  return { correct, total, scorePct: Math.round((correct / total) * 100) };
+}
 
 export const submitAttempt = mutation({
   handler: async (
@@ -113,6 +163,32 @@ export const submitAttempt = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     const user = await ctx.db.get(userId);
+
+    // AI-generated assessment (slug format: "set-<id>")
+    if (quizSlug.startsWith("set-")) {
+      const assessmentId = ctx.db.normalizeId("assessments", quizSlug.slice(4));
+      if (!assessmentId) throw new Error("Assessment not found");
+      const assessment = await ctx.db.get(assessmentId);
+      if (!assessment) throw new Error("Assessment not found");
+      const { correct, total, scorePct } = grade(assessment.questions, answers);
+      const attemptId = await ctx.db.insert("attempts", {
+        userId,
+        userName: user?.name ?? undefined,
+        assessmentId,
+        quizSlug,
+        quizTitle: assessment.title,
+        category: assessment.sourceLabel,
+        answers,
+        total,
+        correctCount: correct,
+        scorePct,
+        durationMs,
+        completedAt: Date.now(),
+      });
+      return attemptId;
+    }
+
+    // Catalogue quiz
     const quiz = await ctx.db
       .query("quizzes")
       .withIndex("by_slug", (q) => q.eq("slug", quizSlug))
@@ -123,12 +199,7 @@ export const submitAttempt = mutation({
       .withIndex("by_quiz", (q) => q.eq("quizId", quiz._id))
       .collect();
     questions.sort((a, b) => a.order - b.order);
-    let correct = 0;
-    for (let i = 0; i < questions.length; i++) {
-      if (answers[i] === questions[i].correctIndex) correct++;
-    }
-    const total = questions.length;
-    const scorePct = total > 0 ? Math.round((correct / total) * 100) : 0;
+    const { correct, total, scorePct } = grade(questions, answers);
     const attemptId = await ctx.db.insert("attempts", {
       userId,
       userName: user?.name ?? undefined,
@@ -168,7 +239,7 @@ export const myStats = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
     if (attempts.length === 0) {
-      return { taken: 0, avgAccuracy: 0, bestScore: 0, minutes: 0 };
+      return { taken: 0, avgAccuracy: 0, bestScore: 0, minutes: 0, categories: 0 };
     }
     const avgAccuracy = Math.round(
       attempts.reduce((s, a) => s + a.scorePct, 0) / attempts.length,
@@ -215,5 +286,193 @@ export const leaderboard = query({
       .filter((r) => r.taken >= 1)
       .sort((a, b) => b.avgAccuracy - a.avgAccuracy || b.bestScore - a.bestScore)
       .slice(0, 25);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Learner profile & competency state
+// ---------------------------------------------------------------------------
+
+export const upsertProfile = mutation({
+  args: {
+    fullName: v.optional(v.string()),
+    roleTitle: v.optional(v.string()),
+    department: v.optional(v.string()),
+    experience: v.optional(v.string()),
+    primaryDomain: v.optional(v.string()),
+    secondaryDomains: v.array(v.string()),
+    responsibilities: v.optional(v.string()),
+    goals: v.optional(v.string()),
+    competencies: v.array(
+      v.object({ id: v.string(), score: v.number(), target: v.number() }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const existing = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    const payload = { ...args, onboarded: true };
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      return existing._id;
+    }
+    return ctx.db.insert("profiles", { userId, ...payload });
+  },
+});
+
+export const myProfile = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return (
+      (await ctx.db
+        .query("profiles")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .unique()) ?? null
+    );
+  },
+});
+
+/** Apply competency deltas after an assessment (clamped 0–100). */
+export const applyCompetencyImpact = mutation({
+  args: {
+    deltas: v.array(v.object({ id: v.string(), delta: v.number() })),
+    attemptId: v.id("attempts"),
+  },
+  handler: async (ctx, { deltas, attemptId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (!profile) return false; // no profile yet; nothing to update
+
+    const comps = [...profile.competencies];
+    for (const { id, delta } of deltas) {
+      const idx = comps.findIndex((c) => c.id === id);
+      if (idx >= 0) {
+        comps[idx] = {
+          ...comps[idx],
+          score: Math.max(0, Math.min(100, comps[idx].score + delta)),
+        };
+      }
+    }
+    await ctx.db.patch(profile._id, { competencies: comps });
+    void attemptId;
+    return true;
+  },
+});
+
+/** Overall readiness: mean of competency scores weighted toward gaps below target. */
+export const readiness = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (!profile || profile.competencies.length === 0) return null;
+    const scores = profile.competencies.map((c) => c.score);
+    return Math.round(scores.reduce((s, v) => s + v, 0) / scores.length);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Materials & generated assessments
+// ---------------------------------------------------------------------------
+
+export const saveMaterial = mutation({
+  args: {
+    title: v.string(),
+    fileName: v.string(),
+    fileType: v.string(),
+    wordCount: v.number(),
+    simulatedExtraction: v.boolean(),
+    topics: v.array(v.string()),
+    concepts: v.array(v.string()),
+    objectives: v.array(v.string()),
+    domains: v.array(v.string()),
+    questionOpportunities: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    return ctx.db.insert("materials", { userId, ...args, createdAt: Date.now() });
+  },
+});
+
+export const myMaterials = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return ctx.db
+      .query("materials")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .order("desc")
+      .take(25);
+  },
+});
+
+export const getMaterial = query({
+  args: { id: v.id("materials") },
+  handler: async (ctx, { id }) => ctx.db.get(id),
+});
+
+export const saveAssessment = mutation({
+  args: {
+    title: v.string(),
+    materialId: v.optional(v.id("materials")),
+    sourceLabel: v.string(),
+    difficulty: v.string(),
+    qualityScore: v.number(),
+    questions: v.array(
+      v.object({
+        text: v.string(),
+        options: v.array(v.string()),
+        correctIndex: v.number(),
+        explanation: v.string(),
+        sourceRef: v.string(),
+        domain: v.string(),
+        difficulty: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    return ctx.db.insert("assessments", { userId, ...args, createdAt: Date.now() });
+  },
+});
+
+export const getAssessment = query({
+  args: { id: v.id("assessments") },
+  handler: async (ctx, { id }) => {
+    const a = await ctx.db.get(id);
+    if (!a) return null;
+    return {
+      title: a.title,
+      description: `AI-generated assessment from: ${a.sourceLabel}`,
+      category: a.sourceLabel,
+      difficulty: a.difficulty as "Easy" | "Medium" | "Hard",
+      estMinutes: Math.max(3, a.questions.length),
+      questions: a.questions,
+    };
+  },
+});
+
+export const myAssessments = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return ctx.db
+      .query("assessments")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .order("desc")
+      .take(25);
   },
 });

@@ -20,27 +20,41 @@ export function Wordmark({ className }: { className?: string }) {
     <Link
       to="/dashboard"
       className={cn("group inline-flex items-center gap-2.5", className)}
-      aria-label="Quiza home"
+      aria-label="StatGyan home"
     >
-      <span className="grid size-6 place-items-center rounded-[7px] bg-gradient-to-b from-[#7590ff] to-[#5b76f2] text-[13px] font-bold text-[#07090c] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]">
-        Q
+      <span className="grid size-7 place-items-center rounded-[8px] bg-gradient-to-b from-[#7590ff] to-[#5b76f2] text-sm font-bold text-[#07090c] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]">
+        S
       </span>
-      <span className="text-[15px] font-semibold tracking-[0.08em] text-[var(--qz-text)]">
-        QUIZA
+      <span className="flex flex-col leading-none">
+        <span className="text-[15px] font-semibold tracking-[0.14em] text-[var(--qz-text)]">
+          STATGYAN
+        </span>
+        <span className="mt-1 hidden text-[9px] font-medium tracking-[0.08em] text-muted-qz sm:block">
+          MEASURE · BUILD · STRENGTHEN
+        </span>
       </span>
     </Link>
   );
 }
 
 const NAV_ITEMS = [
-  { to: "/dashboard", label: "Home", icon: Home },
-  { to: "/explore", label: "Explore", icon: Compass },
-  { to: "/leaderboard", label: "Leaderboard", icon: Trophy },
-  { to: "/profile", label: "Profile", icon: User },
+  { to: "/dashboard", label: "Overview", icon: Home },
+  { to: "/competency", label: "Competency", icon: User },
+  { to: "/learning", label: "Learning", icon: Compass },
+  { to: "/igot", label: "iGOT", icon: Trophy },
+];
+
+const NAV_ITEMS_DESKTOP_ONLY = [
+  { to: "/assess", label: "Assessments" },
+  { to: "/generate", label: "Generate MCQs" },
+  { to: "/materials", label: "Materials" },
+  { to: "/assistant", label: "AI Assistant" },
+  { to: "/admin", label: "Admin" },
 ];
 
 function isActive(pathname: string, to: string) {
   if (to === "/dashboard") return pathname === "/dashboard" || pathname.startsWith("/results");
+  if (to === "/competency") return pathname.startsWith("/profile") ? false : pathname.startsWith(to);
   return pathname.startsWith(to);
 }
 
@@ -76,13 +90,13 @@ export function TopNav() {
         <div className="mx-auto flex h-14 max-w-[1200px] items-center gap-4 px-5 sm:px-8">
           <Wordmark />
 
-          <nav className="ml-6 hidden items-center gap-1 md:flex" aria-label="Primary">
-            {NAV_ITEMS.map((item) => (
+          <nav className="ml-4 hidden items-center gap-0.5 lg:flex" aria-label="Primary">
+            {[...NAV_ITEMS, ...NAV_ITEMS_DESKTOP_ONLY].map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 className={cn(
-                  "rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors duration-200",
+                  "rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors duration-200",
                   isActive(location.pathname, item.to)
                     ? "bg-white/[0.06] text-[var(--qz-text)]"
                     : "text-muted-qz hover:bg-white/[0.04] hover:text-secondary",

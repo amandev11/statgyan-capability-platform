@@ -16,6 +16,14 @@ const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 const Explore = lazy(() => import("./pages/Explore.tsx"));
+const Onboarding = lazy(() => import("./pages/Onboarding.tsx"));
+const Competency = lazy(() => import("./pages/Competency.tsx"));
+const Learning = lazy(() => import("./pages/Learning.tsx"));
+const Igot = lazy(() => import("./pages/Igot.tsx"));
+const Admin = lazy(() => import("./pages/Admin.tsx"));
+const Assistant = lazy(() => import("./pages/Assistant.tsx"));
+const Generate = lazy(() => import("./pages/Generate.tsx"));
+const Materials = lazy(() => import("./pages/Materials.tsx"));
 const QuizRunner = lazy(() => import("./pages/QuizRunner.tsx"));
 const Results = lazy(() => import("./pages/Results.tsx"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard.tsx"));
@@ -149,17 +157,30 @@ createRoot(document.getElementById("root")!).render(
                 path="/auth"
                 element={<AuthPage redirectAfterAuth="/dashboard" />}
               />
+              {/* Onboarding has its own chrome */}
               <Route
-                path="/dashboard"
+                path="/onboarding"
                 element={
                   <RequireAuth>
-                    <AppShell />
+                    <Onboarding />
                   </RequireAuth>
                 }
-              >
-                <Route index element={<DashboardHome />} />
+              />
+              {/* Protected application shell */}
+              <Route element={<RequireAuth><AppShell /></RequireAuth>}>
+                <Route path="/dashboard" element={<DashboardHome />} />
+                <Route path="/competency" element={<Competency />} />
+                <Route path="/learning" element={<Learning />} />
+                <Route path="/igot" element={<Igot />} />
+                <Route path="/assess" element={<Explore />} />
+                <Route path="/explore" element={<Explore />} />
+                <Route path="/generate" element={<Generate />} />
+                <Route path="/materials" element={<Materials />} />
+                <Route path="/assistant" element={<Assistant />} />
+                <Route path="/admin" element={<Admin />} />
+                <Route path="/profile" element={<Profile />} />
+                <Route path="/leaderboard" element={<Leaderboard />} />
               </Route>
-              <Route path="/explore" element={<Explore />} />
               <Route
                 path="/quiz/:slug"
                 element={
@@ -173,15 +194,6 @@ createRoot(document.getElementById("root")!).render(
                 element={
                   <RequireAuth>
                     <Results />
-                  </RequireAuth>
-                }
-              />
-              <Route path="/leaderboard" element={<Leaderboard />} />
-              <Route
-                path="/profile"
-                element={
-                  <RequireAuth>
-                    <Profile />
                   </RequireAuth>
                 }
               />

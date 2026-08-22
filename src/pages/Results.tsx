@@ -8,10 +8,12 @@ import {
 } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
-import { useQuery } from "convex/react";
+import { domainName } from "@/lib/statgyan/engine";
+import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, RotateCcw, Sparkles, X } from "lucide-react";
 import { Link, useParams } from "react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 export default function Results() {
@@ -30,7 +32,6 @@ export default function Results() {
       </PageContainer>
     );
   }
-
   if (!data) {
     return (
       <PageContainer width="narrow" className="pt-24 text-center">
@@ -44,9 +45,64 @@ export default function Results() {
       </PageContainer>
     );
   }
+  return <ResultsBody data={data} />;
+}
 
+function ResultsBody({
+  data,
+}: {
+  data: {
+    attempt: import("@/convex/_generated/dataModel").Doc<"attempts">;
+    questions: {
+      text: string;
+      options: string[];
+      correctIndex: number;
+      explanation: string;
+      domain: string;
+      difficulty: string;
+      sourceRef: string;
+    }[];
+  };
+}) {
   const { attempt, questions } = data;
   const verdict = verdictFor(attempt.scorePct);
+
+  // ---- Competency impact: derive per-domain deltas from this attempt ----
+  const impact = useMemo(() => {
+    const byDomain = new Map<string, { correct: number; wrong: number }>();
+    questions.forEach((q, i) => {
+      const dom = q.domain || attempt.category;
+      const rec = byDomain.get(dom) ?? { correct: 0, wrong: 0 };
+      if (attempt.answers[i] === q.correctIndex) rec.correct += 1;
+      else rec.wrong += 1;
+      byDomain.set(dom, rec);
+    });
+    return [...byDomain.entries()]
+      .map(([dom, r]) => {
+        const delta =
+          r.correct > 0
+            ? Math.min(8, Math.max(-6, r.correct * 3 - r.wrong * 1))
+            : -Math.min(5, r.wrong);
+        return { domain: dom, label: domainName(dom), delta };
+      })
+      .sort((a, b) => b.delta - a.delta);
+  }, [attempt, questions]);
+
+  // Persist impact exactly once per result view
+  const appliedRef = useRef<string | null>(null);
+  const [applied, setApplied] = useState(false);
+  const applyImpact = useMutation(api.quiza.applyCompetencyImpact);
+  useEffect(() => {
+    if (appliedRef.current === attempt._id) return;
+    appliedRef.current = attempt._id;
+    void applyImpact({
+      deltas: impact.map((d) => ({ id: d.domain, delta: d.delta })),
+      attemptId: attempt._id,
+    })
+      .then(() => setApplied(true))
+      .catch(() => setApplied(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt._id]);
   const durationSec = Math.round(attempt.durationMs / 1000);
   const ease = [0.22, 1, 0.36, 1] as const;
   // Best-in-session accuracy across the same quiz for delta context
@@ -129,6 +185,63 @@ export default function Results() {
         </div>
       </motion.section>
 
+      {/* ------------------------------------------------ Competency impact */}
+      <motion.section
+        initial={{ opacity: 0, y: 20 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: "-40px" }}
+        transition={{ duration: 0.55, ease }}
+        className="mt-14"
+        aria-label="Competency impact"
+      >
+        <p className="eyebrow mb-2">Competency impact</p>
+        <h2 className="text-lg font-semibold tracking-tight">Your profile just moved</h2>
+        <div className="mt-5 grid gap-2.5 sm:grid-cols-3">
+          {impact.slice(0, 6).map((d) => (
+            <div key={d.domain} className={cn("flex items-center justify-between rounded-xl border px-4 py-3", d.delta > 0 ? "border-emerald-300/[0.16] bg-emerald-400/[0.04]" : d.delta < 0 ? "border-rose-300/[0.16] bg-rose-400/[0.04]" : "hairline-faint")}>
+              <span className="truncate text-[13px] font-medium">{d.label}</span>
+              <span className={cn("num text-sm font-semibold", d.delta > 0 ? "text-emerald-300" : d.delta < 0 ? "text-rose-300" : "text-muted-qz")}>
+                {d.delta > 0 ? `+${d.delta}` : d.delta}
+              </span>
+            </div>
+          ))}
+        </div>
+        {applied && (
+          <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-300/80">
+            <Check className="size-3" /> Applied to your competency profile.
+          </p>
+        )}
+
+        {/* AI insight */}
+        <div className="edge-glow mt-6 rounded-2xl border hairline bg-[var(--qz-surface-1)] p-6">
+          <p className="eyebrow mb-3 flex items-center gap-2">
+            <Sparkles className="size-3.5 text-[var(--qz-accent)]" /> AI insight
+          </p>
+          <p className="text-sm leading-relaxed text-secondary">
+            “{impact.length > 0 && impact[0].delta > 0
+              ? `You demonstrated your strongest evidence in ${impact[0].label.toLowerCase()}. `
+              : "This round was demanding across all tested domains. "}
+            {impact.length > 1 && impact[impact.length - 1].delta < 0
+              ? `Application-level questions in ${impact[impact.length - 1].label.toLowerCase()} were the weakest signal, so your next recommended activity focuses there. `
+              : ""}
+            Your learning path has been re-ranked with this evidence.”
+          </p>
+          <Link to="/learning" className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--qz-accent)] transition-opacity hover:opacity-80">
+            See updated recommendations <ArrowRight className="size-3.5" />
+          </Link>
+        </div>
+
+        {/* Adaptive loop visual */}
+        <div className="edge-glow mt-4 flex items-center justify-between gap-1 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-5 py-4 text-[11px] text-muted-qz sm:text-xs" aria-label="Adaptive loop">
+          {["Assessment", "AI analysis", "Competency update", "New recommendation"].map((s, i, arr) => (
+            <span key={s} className="flex items-center gap-1">
+              <span className={i === 2 ? "font-medium text-[var(--qz-text)]" : undefined}>{s}</span>
+              {i < arr.length - 1 && <span aria-hidden className="px-0.5 text-[var(--qz-accent)]">→</span>}
+            </span>
+          ))}
+        </div>
+      </motion.section>
+
       {/* ----------------------------------------------------------- Review */}
       <motion.section
         initial={prefersReducedMotion() ? false : { opacity: 0, y: 20 }}
@@ -157,7 +270,7 @@ export default function Results() {
             const correct = chosen === q.correctIndex;
             return (
               <li
-                key={q._id}
+                key={i}
                 className={cn(
                   "edge-glow rounded-xl border p-5",
                   correct

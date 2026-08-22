@@ -32,13 +32,13 @@ export default function Explore() {
   return (
     <PageContainer width="wide">
       <div className="max-w-xl">
-        <p className="eyebrow mb-2">Explore</p>
+        <p className="eyebrow mb-2">Assessments</p>
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Every subject, one shelf.
+          Evidence for your competency profile.
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-secondary">
           {isAuthenticated
-            ? "Filter by subject, follow your curiosity. Scores are recorded automatically."
+            ? "Domain-tagged rounds feed the gap engine — every result updates your capability map and learning path."
             : "Sign in to keep score — or browse freely."}
         </p>
       </div>
