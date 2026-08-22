@@ -108,7 +108,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       </header>
 
       <div className="flex flex-1 items-center justify-center px-5 pb-24 pt-6">
-        <div className="animate-rise w-full max-w-[400px] rounded-2xl border hairline bg-[var(--qz-surface-1)] p-8 shadow-[var(--shadow-elevated)]">
+        <div className="edge-glow animate-rise w-full max-w-[400px] rounded-2xl border hairline bg-[var(--qz-surface-1)] p-8 shadow-[var(--shadow-elevated)]">
           {step === "signIn" ? (
             <>
               <p className="eyebrow">Welcome to Quiza</p>

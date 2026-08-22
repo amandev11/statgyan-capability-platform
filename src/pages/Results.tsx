@@ -83,7 +83,7 @@ export default function Results() {
         <p className="mt-5 text-sm text-secondary">{verdict.note}</p>
 
         {/* Metrics row */}
-        <div className="mt-9 grid grid-cols-3 divide-x divide-white/[0.06] rounded-2xl border hairline bg-[var(--qz-surface-1)] py-5">
+        <div className="edge-glow mt-9 grid grid-cols-3 divide-x divide-white/[0.06] rounded-2xl border hairline bg-[var(--qz-surface-1)] py-5">
           <div>
             <p className="num text-xl font-semibold">{attempt.correctCount}/{attempt.total}</p>
             <p className="mt-1 text-xs text-muted-qz">Correct</p>
@@ -159,7 +159,7 @@ export default function Results() {
               <li
                 key={q._id}
                 className={cn(
-                  "rounded-xl border p-5",
+                  "edge-glow rounded-xl border p-5",
                   correct
                     ? "hairline-faint bg-[var(--qz-surface-1)]"
                     : "border-rose-300/[0.16] bg-[var(--qz-surface-1)]",
@@ -201,7 +201,7 @@ export default function Results() {
           })}
         </ol>
 
-        <div className="mt-8 flex items-center justify-center gap-4 rounded-2xl border hairline-faint bg-[var(--qz-surface-1)] px-6 py-5">
+        <div className="edge-glow mt-8 flex items-center justify-center gap-4 rounded-2xl border hairline-faint bg-[var(--qz-surface-1)] px-6 py-5">
           <DifficultyBadge difficulty={attempt.category === "" ? "Easy" : "Medium"} className="hidden" />
           <p className="text-sm text-secondary">
             Ready for a different subject?

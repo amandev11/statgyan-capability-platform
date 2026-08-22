@@ -48,7 +48,7 @@ export default function Leaderboard() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.45, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] }}
                 className={cn(
-                  "relative overflow-hidden rounded-2xl border p-5",
+                  "edge-glow relative overflow-hidden rounded-2xl border p-5",
                   i === 0
                     ? "border-[var(--qz-accent)]/30 bg-gradient-to-b from-[var(--qz-accent)]/[0.09] to-[var(--qz-surface-1)]"
                     : "hairline bg-[var(--qz-surface-1)]",
@@ -85,7 +85,7 @@ export default function Leaderboard() {
 
           {/* Remaining ranks */}
           {rows.length > 3 && (
-            <ul className="mt-6 divide-y divide-white/[0.05] overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)]">
+            <ul className="edge-glow mt-6 divide-y divide-white/[0.05] overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)]">
               {rows.slice(3).map((row, idx) => {
                 const rank = idx + 4;
                 const mine = row.userId === myId;

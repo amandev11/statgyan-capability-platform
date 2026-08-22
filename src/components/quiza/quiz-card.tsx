@@ -21,7 +21,7 @@ export function QuizCard({ quiz, className }: { quiz: QuizCardData; className?: 
       to={`/quiz/${quiz.slug}`}
       data-cursor="hover"
       className={cn(
-        "group relative flex flex-col rounded-xl border hairline bg-[var(--qz-surface-1)] p-5",
+        "group edge-glow edge-glow-hover relative flex flex-col rounded-xl border hairline bg-[var(--qz-surface-1)] p-5",
         "transition-[transform,border-color,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
         "hover:-translate-y-0.5 hover:border-white/[0.14] hover:bg-[var(--qz-surface-2)]",
         "focus-visible:-translate-y-0.5",

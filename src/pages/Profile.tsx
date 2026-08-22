@@ -33,7 +33,7 @@ function Badge({
   return (
     <div
       className={cn(
-        "flex items-start gap-3.5 rounded-xl border p-4 transition-colors duration-300",
+        "flex items-start gap-3.5 rounded-xl border p-4 edge-glow transition-colors duration-300",
         earned
           ? "hairline bg-[var(--qz-surface-1)]"
           : "border-white/[0.04] bg-transparent opacity-45",
@@ -95,7 +95,7 @@ export default function Profile() {
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative overflow-hidden rounded-2xl border hairline bg-gradient-to-b from-[var(--qz-surface-2)] to-[var(--qz-surface-1)] p-7 sm:p-9"
+        className="edge-glow relative overflow-hidden rounded-2xl border hairline bg-gradient-to-b from-[var(--qz-surface-2)] to-[var(--qz-surface-1)] p-7 sm:p-9"
       >
         <div
           aria-hidden
@@ -140,7 +140,7 @@ export default function Profile() {
 
       {/* ---------------------------------------------------------- Stats */}
       <section className="mt-8">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-8 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-6 py-7 sm:grid-cols-4">
+        <div className="edge-glow grid grid-cols-2 gap-x-6 gap-y-8 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-6 py-7 sm:grid-cols-4">
           <StatBlock label="Rounds played" value={stats.taken} />
           <StatBlock label="Average accuracy" value={`${stats.avgAccuracy}%`} />
           <StatBlock label="Best score" value={`${stats.bestScore}%`} />
@@ -206,7 +206,7 @@ export default function Profile() {
             </Link>
           </div>
         ) : (
-          <ul className="divide-y divide-white/[0.05] overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)]">
+          <ul className="edge-glow divide-y divide-white/[0.05] overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)]">
             {recent.map((attempt) => (
               <li key={attempt._id}>
                 <Link

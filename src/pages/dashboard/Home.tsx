@@ -86,7 +86,7 @@ export default function DashboardHome() {
           <Link
             to={`/quiz/${recommended.slug}`}
             data-cursor="hover"
-            className="group relative block overflow-hidden rounded-2xl border hairline bg-gradient-to-b from-[var(--qz-surface-2)] to-[var(--qz-surface-1)] p-7 transition-all duration-300 hover:border-white/[0.15] sm:p-9"
+            className="group edge-glow edge-glow-hover relative block overflow-hidden rounded-2xl border hairline bg-gradient-to-b from-[var(--qz-surface-2)] to-[var(--qz-surface-1)] p-7 transition-all duration-300 hover:border-white/[0.15] sm:p-9"
           >
             <div
               aria-hidden
@@ -135,7 +135,7 @@ export default function DashboardHome() {
         className="mt-10"
       >
         <SectionHeader eyebrow="Performance" title="Your record so far" />
-        <div className="grid grid-cols-2 gap-x-6 gap-y-8 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-6 py-7 sm:grid-cols-4">
+        <div className="edge-glow grid grid-cols-2 gap-x-6 gap-y-8 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-6 py-7 sm:grid-cols-4">
           {loading ? (
             [...Array(4)].map((_, i) => <SkeletonBlock key={i} className="h-12" />)
           ) : (
@@ -191,7 +191,7 @@ export default function DashboardHome() {
             </Link>
           </div>
         ) : (
-          <ul className="divide-y divide-white/[0.05] overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)]">
+          <ul className="edge-glow divide-y divide-white/[0.05] overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)]">
             {attempts.slice(0, 5).map((attempt) => (
               <li key={attempt._id}>
                 <Link
