@@ -1,5 +1,6 @@
 import { ai, ORG_PRIORITY } from "./ai";
 import {
+  COMPETENCY_MAP,
   ROLE_MAP,
   SEED_COMPETENCIES,
   SEED_PROFILE,
@@ -82,7 +83,7 @@ function seedState(): StatgyanState {
         id: "ins-1",
         kind: "priority-alert",
         title: "Priority Alert",
-        body: `${topGap ? topGap.competencyId.replace("-", " ") : "Data Quality"} is currently among your largest role-critical competency gaps. A diagnostic assessment will sharpen the estimate.`,
+        body: `${COMPETENCY_MAP[topGap?.competencyId ?? "dm-quality"]?.name ?? "Data Quality"} is currently among your largest role-critical competency gaps. A diagnostic assessment will sharpen the estimate.`,
         createdAt: Date.now() - 86400000,
         relatedCompetencyId: topGap?.competencyId,
       },

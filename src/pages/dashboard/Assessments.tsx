@@ -25,6 +25,7 @@ import type {
   AssessmentAttempt,
   ConfidenceRating,
   Question,
+  QuestionType,
 } from "@/lib/statgyan/types";
 
 const CONFIDENCE_OPTIONS: { value: ConfidenceRating; label: string }[] = [

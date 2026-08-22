@@ -39,14 +39,6 @@ export default function Competencies() {
     score: h.score,
   }));
 
-  const byDomain = COMPETENCIES.reduce<Record<string, typeof competencies>>((acc) => acc, {});
-  for (const c of COMPETENCIES) {
-    const items = competencies.filter((lc2) => {
-      return COMPETENCY_MAP[lc2.competencyId]?.domain === c.domain;
-    });
-    if (items.length > 0) byDomain[c.domain] = items;
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader
