@@ -92,6 +92,7 @@ const schema = defineSchema(
       responsibilities: v.optional(v.string()),
       goals: v.optional(v.string()),
       onboarded: v.boolean(),
+      completedModules: v.optional(v.array(v.string())), // domainIds of finished learning-path steps
       competencies: v.array(
         v.object({ id: v.string(), score: v.number(), target: v.number() }),
       ),
@@ -109,6 +110,8 @@ const schema = defineSchema(
       objectives: v.array(v.string()),
       domains: v.array(v.string()),
       questionOpportunities: v.number(),
+      pages: v.optional(v.number()), // real page count when the parser provides one
+      text: v.optional(v.string()), // persisted extraction (capped) — powers grounded MCQ generation
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
 

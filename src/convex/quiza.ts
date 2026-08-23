@@ -440,11 +440,32 @@ export const saveMaterial = mutation({
     objectives: v.array(v.string()),
     domains: v.array(v.string()),
     questionOpportunities: v.number(),
+    pages: v.optional(v.number()),
+    text: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     return ctx.db.insert("materials", { userId, ...args, createdAt: Date.now() });
+  },
+});
+
+/** Mark/unmark a learning-path step (by domainId) as completed for this learner. */
+export const toggleModuleComplete = mutation({
+  args: { domainId: v.string(), completed: v.boolean() },
+  handler: async (ctx, { domainId, completed }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const profile = await ctx.db
+      .query("profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (!profile) return false;
+    const set = new Set(profile.completedModules ?? []);
+    if (completed) set.add(domainId);
+    else set.delete(domainId);
+    await ctx.db.patch(profile._id, { completedModules: [...set] });
+    return true;
   },
 });
 

@@ -289,8 +289,11 @@ export function analyzeDocument(input: {
   fileType: string;
   text: string;
 }): DocAnalysis {
-  const binary = !/\.(txt|csv|md|json)$/i.test(input.fileName) || input.text.trim().length === 0;
-  const source = binary ? input.fileName.replace(/[_-]/g, " ") : input.text;
+  // Real extraction whenever we obtained usable text (TXT/CSV/MD/JSON natively,
+  // PDF via pdf.js); only truly unparseable binaries fall back to filename-driven
+n  // analysis, which is honestly labelled "simulated extraction".
+  const hasText = input.text.trim().length > 0;
+  const source = hasText ? input.text : input.fileName.replace(/[_-]/g, " ");
   const lower = source.toLowerCase();
   const words = source.split(/\s+/).filter(Boolean).length;
   const detected = detectDomains(lower).filter((d) => d.hits > 0).slice(0, 4);
@@ -306,9 +309,9 @@ export function analyzeDocument(input: {
     ),
   ).slice(0, 10);
 
-  const headings = binary
-    ? []
-    : Array.from(source.matchAll(/^CHAPTER[^\n]*|^[A-Z][A-Z \-&]{8,}$/gm)).map((m) => m[0].trim());
+  const headings = hasText
+    ? Array.from(source.matchAll(/^CHAPTER[^\n]*|^[A-Z][A-Z \-&]{8,}$/gm)).map((m) => m[0].trim())
+    : [];
   const topics = [...new Set([...domains, ...headings.slice(0, 3)])].slice(0, 6);
 
   const objectives = [
@@ -328,7 +331,7 @@ export function analyzeDocument(input: {
   return {
     title: guessTitle(input.fileName, headings),
     wordCount: words,
-    simulatedExtraction: binary && input.text.trim().length === 0,
+    simulatedExtraction: !hasText,
     topics: topics.length ? topics : ["General statistical practice"],
     concepts: concepts.length ? concepts : ["Applied statistical procedure"],
     objectives,
@@ -449,32 +452,40 @@ export function generateAssessment(
   };
 
   // 1) Grounded cloze items from the material's own sentences.
-  if (material && !material.simulatedExtraction) {
-    const sentences = material.text!
-      .split(/(?<=[.!?])\s+/)
-      .map((s) => s.trim())
-      .filter((s) => s.split(/\s+/).length >= 8 && s.split(/\s+/).length <= 45);
-    const domainIds = detectDomains(material.text!.toLowerCase()).filter((d) => d.hits > 0).map((d) => d.id);
-    let si = 0;
-    while (questions.length < Math.ceil(config.count * 0.6) && si < sentences.length) {
-      const sentence = sentences[si++];
-      const hit = LEXICON && findConceptInSentence(sentence);
-      if (!hit) continue;
-      const domainId = domainIds[0] ?? DOMAINS[6].id;
-      const distractors = LEXICON[domainId].concepts.filter((c) => c !== hit).sort(() => rnd() - 0.5).slice(0, 3);
-      if (distractors.length < 3) continue;
-      const cloze = sentence.replace(new RegExp(hit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "______");
-      if (cloze === sentence) continue;
-      const opts = [hit, ...distractors].sort(() => rnd() - 0.5);
-      push({
-        text: `Complete per the material: "${cloze}"`,
-        options: opts,
-        correctIndex: opts.indexOf(hit),
-        explanation: `The material states: "${sentence}"`,
-        sourceRef: `Uploaded material · ${material.title}`,
-        domain: domainId,
-        difficulty: config.difficulty === "Adaptive" ? "Medium" : config.difficulty,
-      });
+  //    Text may embed "[Page N]" markers from real PDF extraction — use them
+  //    so every question cites its exact source page.
+  if (material && !material.simulatedExtraction && material.text) {
+    const pageMatches = [...material.text.matchAll(/\[Page (\d+)\]([\s\S]*?)(?=\[Page \d+\]|$)/g)];
+    const chunks = pageMatches.length
+      ? pageMatches.map((m) => ({ page: Number(m[1]), body: m[2] }))
+      : [{ page: undefined as number | undefined, body: material.text }];
+    const domainIds = detectDomains(material.text.toLowerCase()).filter((d) => d.hits > 0).map((d) => d.id);
+    for (const chunk of chunks) {
+      const sentences = chunk.body
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.split(/\s+/).length >= 8 && s.split(/\s+/).length <= 45);
+      for (const sentence of sentences) {
+        if (questions.length >= Math.ceil(config.count * 0.6)) break;
+        const hit = findConceptInSentence(sentence);
+        if (!hit) continue;
+        const domainId = domainIds[0] ?? DOMAINS[6].id;
+        const distractors = LEXICON[domainId].concepts.filter((c) => c !== hit).sort(() => rnd() - 0.5).slice(0, 3);
+        if (distractors.length < 3) continue;
+        const cloze = sentence.replace(new RegExp(hit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "______");
+        if (cloze === sentence) continue;
+        const opts = [hit, ...distractors].sort(() => rnd() - 0.5);
+        push({
+          text: `Complete per the material: "${cloze}"`,
+          options: opts,
+          correctIndex: opts.indexOf(hit),
+          explanation: `The material states${chunk.page ? ` (p. ${chunk.page})` : ""}: "${sentence}"`,
+          sourceRef: `Uploaded material · ${material.title}${chunk.page ? ` · p. ${chunk.page}` : ""}`,
+          domain: domainId,
+          difficulty: config.difficulty === "Adaptive" ? "Medium" : config.difficulty,
+        });
+      }
+      if (questions.length >= config.count) break;
     }
   }
 
