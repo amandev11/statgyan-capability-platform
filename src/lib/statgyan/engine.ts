@@ -744,9 +744,24 @@ export function generateAssessment(
 
   const slotFits = (c: GeneratedQuestion, s: (typeof slots)[number]) =>
     c.domain === s.domain && diffPlan.includes(c.difficulty as Difficulty) && bloomPlan.includes(c.bloom);
-  const levelFits = (c: GeneratedQuestion) =>
-    diffPlan.includes(c.difficulty as Difficulty) && bloomPlan.includes(c.bloom);
+  // Fixed blueprint dimensions are NEVER relaxed — a request for "Easy" or
+  // "Application" must not silently receive Medium/Hard items. Only genuinely
+  // mixed plans allow cross-level filling.
+  const levelStrict = (c: GeneratedQuestion) =>
+    (diffPlan.length === 1 ? c.difficulty === config.difficulty : true) &&
+    (bloomPlan.length === 1 ? c.bloom === config.bloom : true);
   const fresh = (c: GeneratedQuestion) => c && !exclude.has(c.id);
+
+  // Part 30 transparency: name any explicitly selected domain the material
+  // cannot support at all.
+  if (material && config.domains.length) {
+    for (const dom of config.domains) {
+      if (!materialPool.some((x) => x.domain === dom)) {
+        noteOnce(noted, `absent-${dom}`,
+          `${domainName(dom)} is not represented in the uploaded material — its slots draw from the curated scenario bank.`);
+      }
+    }
+  }
 
   const picked: GeneratedQuestion[] = [];
   const used = new Set<string>();
@@ -768,10 +783,10 @@ export function generateAssessment(
       c = scenarioPool.find((x) => slotFits(x, slot) && !used.has(x.id) && fresh(x));
       source = "scenario";
     }
-    // 3) Any remaining material candidate — source dominance beats perfect
-    //    level matching, but the deviation is reported.
+    // 3) Any remaining material candidate that still honours FIXED blueprint
+    //    dimensions — source dominance beats domain purity in mixed plans.
     if (!c) {
-      c = materialPool.find((x) => !used.has(x.id) && fresh(x));
+      c = materialPool.find((x) => levelStrict(x) && !used.has(x.id) && fresh(x));
       if (c) {
         source = "material";
         if (c.domain !== slot.domain) {
@@ -779,15 +794,11 @@ export function generateAssessment(
             `${domainName(slot.domain)} could not fill its full quota from this source — covered from neighbouring material content.`);
           domainShortfall.add(slot.domain);
         }
-        if (!levelFits(c)) {
-          noteOnce(noted, "mat-level",
-            "The material could not fill every slot at the exact requested difficulty/level, so remaining grounded questions were preferred over generic bank items.");
-        }
       }
     }
-    // 4) Relaxed scenario (any domain/level).
+    // 4) Relaxed scenario — still honouring fixed dimensions.
     if (!c) {
-      c = scenarioPool.find((x) => !used.has(x.id) && fresh(x));
+      c = scenarioPool.find((x) => levelStrict(x) && !used.has(x.id) && fresh(x));
       if (c) {
         source = "scenario";
         noteOnce(noted, "bank-relaxed",
