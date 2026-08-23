@@ -291,7 +291,7 @@ export function analyzeDocument(input: {
 }): DocAnalysis {
   // Real extraction whenever we obtained usable text (TXT/CSV/MD/JSON natively,
   // PDF via pdf.js); only truly unparseable binaries fall back to filename-driven
-n  // analysis, which is honestly labelled "simulated extraction".
+  // analysis, which is honestly labelled "simulated extraction".
   const hasText = input.text.trim().length > 0;
   const source = hasText ? input.text : input.fileName.replace(/[_-]/g, " ");
   const lower = source.toLowerCase();
