@@ -122,6 +122,11 @@ const schema = defineSchema(
       sourceLabel: v.string(),
       difficulty: v.string(),
       qualityScore: v.number(),
+      // Persisted generation blueprint — the assessment remembers how it was made.
+      requestedCount: v.optional(v.number()),
+      bloom: v.optional(v.string()),
+      passingScore: v.optional(v.number()),
+      randomized: v.optional(v.boolean()),
       questions: v.array(
         v.object({
           text: v.string(),
@@ -131,6 +136,10 @@ const schema = defineSchema(
           sourceRef: v.string(),
           domain: v.string(),
           difficulty: v.string(),
+          id: v.optional(v.string()),
+          bloom: v.optional(v.string()),
+          generationType: v.optional(v.string()),
+          sourceSnippet: v.optional(v.string()),
         }),
       ),
       createdAt: v.number(),

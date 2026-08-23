@@ -498,6 +498,10 @@ export const saveAssessment = mutation({
     sourceLabel: v.string(),
     difficulty: v.string(),
     qualityScore: v.number(),
+    requestedCount: v.optional(v.number()),
+    bloom: v.optional(v.string()),
+    passingScore: v.optional(v.number()),
+    randomized: v.optional(v.boolean()),
     questions: v.array(
       v.object({
         text: v.string(),
@@ -507,6 +511,10 @@ export const saveAssessment = mutation({
         sourceRef: v.string(),
         domain: v.string(),
         difficulty: v.string(),
+        id: v.optional(v.string()),
+        bloom: v.optional(v.string()),
+        generationType: v.optional(v.string()),
+        sourceSnippet: v.optional(v.string()),
       }),
     ),
   },
@@ -529,6 +537,8 @@ export const getAssessment = query({
       category: a.sourceLabel,
       difficulty: a.difficulty as "Easy" | "Medium" | "Hard",
       estMinutes: Math.max(3, a.questions.length),
+      passingScore: a.passingScore ?? 60,
+      randomized: a.randomized ?? false,
       questions: a.questions,
     };
   },

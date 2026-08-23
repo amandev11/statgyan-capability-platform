@@ -80,7 +80,11 @@ export interface AssessmentConfig {
   randomized: boolean;
 }
 
+export type Bloom = "Recall" | "Understanding" | "Application" | "Analysis";
+
 export interface GeneratedQuestion {
+  /** Stable deterministic identity — hash of stem + source. Never an array index. */
+  id: string;
   text: string;
   options: string[];
   correctIndex: number;
@@ -88,4 +92,34 @@ export interface GeneratedQuestion {
   sourceRef: string;
   domain: string;
   difficulty: string;
+  bloom: Bloom;
+  /** Where the question came from — material templates vs curated scenario bank. */
+  generationType:
+    | "material-cloze"
+    | "material-definition"
+    | "material-procedure"
+    | "material-causal"
+    | "scenario";
+  /** Exact supporting sentence, when derived from uploaded material. */
+  sourceSnippet?: string;
+}
+
+/** Session context so repeated generations rotate instead of repeating. */
+export interface GenerationOptions {
+  /** Increments on every press of "Generate" — changes the seed even for identical blueprints. */
+  generationNumber: number;
+  /** Candidate IDs used in this session; avoided while alternatives exist. */
+  excludeIds?: string[];
+}
+
+/** Transparent blueprint validation — what was requested vs what was actually delivered. */
+export interface BlueprintReport {
+  requestedCount: number;
+  deliveredCount: number;
+  domainDistribution: { label: string; count: number }[];
+  difficultyDistribution: { label: string; count: number }[];
+  bloomDistribution: { label: string; count: number }[];
+  sources: { materialDerived: number; scenarioFallback: number };
+  /** Honest notes about any blueprint dimension that could not be fully honoured. */
+  notes: string[];
 }

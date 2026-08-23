@@ -68,6 +68,13 @@ function ResultsBody({
   const { attempt, questions } = data;
   const verdict = verdictFor(attempt.scorePct);
   const profileLoading = profile === undefined;
+  // Generated assessments persist their blueprint's pass mark — judge it here.
+  const isGenerated = attempt.quizSlug.startsWith("set-");
+  const generatedAssessment = useQuery(
+    api.quiza.getAssessment,
+    isGenerated ? { id: attempt.quizSlug.slice(4) as never } : "skip",
+  );
+  const passMark = generatedAssessment?.passingScore;
 
   // ---- Per-domain evidence from this attempt (instant display) ----
   const perf = useMemo(() => {
@@ -146,6 +153,13 @@ function ResultsBody({
         </div>
 
         <p className="mt-5 text-sm text-secondary">{verdict.note}</p>
+
+        {passMark !== undefined && (
+          <p className="num mt-2 text-xs text-muted-qz" aria-live="polite">
+            {attempt.scorePct >= passMark ? "Passed" : "Below"} the published pass mark ({passMark}%)
+            {" · "}blueprint pass score from the generator
+          </p>
+        )}
 
         {/* Metrics row */}
         <div className="edge-glow mt-9 grid grid-cols-3 divide-x divide-white/[0.06] rounded-2xl border hairline bg-[var(--qz-surface-1)] py-5">

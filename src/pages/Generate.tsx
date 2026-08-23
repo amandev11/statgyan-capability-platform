@@ -1,19 +1,22 @@
 import { PageContainer, SectionHeader, SkeletonBlock } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
 import { DOMAINS, domainName, generateAssessment } from "@/lib/statgyan/engine";
-import type { AssessmentConfig, GeneratedQuestion } from "@/lib/statgyan/types";
+import type { GenerationResult } from "@/lib/statgyan/engine";
+import type { AssessmentConfig } from "@/lib/statgyan/types";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
+  AlertTriangle,
   Check,
   Info,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Wand2,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 export default function Generate() {
@@ -33,10 +36,13 @@ export default function Generate() {
     passingScore: 60,
     randomized: true,
   });
-  const [generated, setGenerated] = useState<{
-    questions: GeneratedQuestion[];
-    quality: { score: number; checks: { label: string; pass: boolean; note: string }[] };
-  } | null>(null);
+  const [generated, setGenerated] = useState<GenerationResult | null>(null);
+  // Generation nonce: every press of "Generate" rotates the seeded selection
+  // even for an identical blueprint. Session history avoids repeating candidates
+  // while alternatives exist.
+  const [generationNumber, setGenerationNumber] = useState(0);
+  const historyRef = useRef<Set<string>>(new Set());
+  const [genError, setGenError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<string | null>(null);
 
@@ -63,16 +69,66 @@ export default function Generate() {
 
   const run = () => {
     setPublished(null);
-    const result = generateAssessment(sourceMaterial, config);
+    setGenError(null);
+    const next = generationNumber + 1;
+    setGenerationNumber(next);
+    const result = generateAssessment(sourceMaterial, config, {
+      generationNumber: next,
+      excludeIds: [...historyRef.current],
+    });
+    for (const q of result.questions) historyRef.current.add(q.id);
     setGenerated(result);
+  };
+
+  /** Replace one reviewed question with a fresh candidate matching its exact
+   *  blueprint contract (domain × difficulty × Bloom), excluding all current IDs. */
+  const regenerateQuestion = (index: number) => {
+    if (!generated) return;
+    const old = generated.questions[index];
+    if (!old) return;
+    const next = generationNumber + 1;
+    setGenerationNumber(next);
+    const result = generateAssessment(
+      sourceMaterial,
+      {
+        ...config,
+        count: 1,
+        domains: [old.domain],
+        difficulty: (["Easy", "Medium", "Hard"].includes(old.difficulty)
+          ? old.difficulty
+          : "Mixed") as AssessmentConfig["difficulty"],
+        bloom: old.bloom as AssessmentConfig["bloom"],
+        randomized: false,
+      },
+      {
+        generationNumber: next,
+        excludeIds: [
+          ...historyRef.current,
+          ...generated.questions.map((q) => q.id),
+        ],
+      },
+    );
+    const replacement = result.questions[0];
+    if (!replacement) {
+      setGenError(
+        `No unused candidate matched ${domainName(old.domain)} · ${old.difficulty} · ${old.bloom}. Remove another question first or broaden the blueprint.`,
+      );
+      return;
+    }
+    setGenError(null);
+    historyRef.current.add(replacement.id);
+    setGenerated({
+      ...generated,
+      questions: generated.questions.map((q, i) => (i === index ? replacement : q)),
+    });
   };
 
   const removeQuestion = (index: number) => {
     setGenerated((g) =>
       g
         ? {
+            ...g,
             questions: g.questions.filter((_, i) => i !== index),
-            quality: g.quality,
           }
         : g,
     );
@@ -88,8 +144,12 @@ export default function Generate() {
           : `Domain Assessment — ${config.domains.length ? "Selected domains" : "Mixed"}`,
         materialId: materialId ? (materialId as never) : undefined,
         sourceLabel: sourceMaterial ? sourceMaterial.title : "Domain scenario bank",
-        difficulty: config.difficulty,
+        difficulty: config.difficulty === "Adaptive" ? "Mixed" : config.difficulty,
         qualityScore: generated.quality.score,
+        requestedCount: config.count,
+        bloom: config.bloom,
+        passingScore: config.passingScore,
+        randomized: config.randomized,
         questions: generated.questions,
       });
       setPublished(id);
@@ -229,7 +289,8 @@ export default function Generate() {
               data-cursor="hover"
               className="btn-specular inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold"
             >
-              <Wand2 className="size-4" /> Generate questions
+              <Wand2 className="size-4" />{" "}
+              {generated ? `Generate again — round ${generationNumber + 1}` : "Generate questions"}
             </button>
           </div>
         </section>
@@ -245,6 +306,57 @@ export default function Generate() {
             </div>
           ) : (
             <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+              {genError && (
+                <div
+                  role="alert"
+                  className="mb-4 flex items-start gap-2 rounded-xl border border-rose-300/25 bg-rose-400/[0.06] px-4 py-3 text-xs leading-relaxed text-rose-100"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  <span>{genError}</span>
+                </div>
+              )}
+
+              {/* Blueprint validation — what was requested vs what was delivered */}
+              <div className="edge-glow mb-4 rounded-2xl border hairline bg-[var(--qz-surface-1)] p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="eyebrow">Blueprint respected</p>
+                  <span className="num text-[11px] text-muted-qz">Generation #{generationNumber}</span>
+                </div>
+                <div className="mt-3 grid gap-x-6 gap-y-1.5 text-xs leading-relaxed text-secondary sm:grid-cols-2">
+                  <p>
+                    <span className="text-muted-qz">Delivered:</span>{" "}
+                    <span className="num">{generated.report.deliveredCount}/{generated.report.requestedCount}</span>
+                  </p>
+                  <p>
+                    <span className="text-muted-qz">Sources:</span>{" "}
+                    <span className="num">
+                      {generated.report.sources.materialDerived} material · {generated.report.sources.scenarioFallback} bank
+                    </span>
+                  </p>
+                  <p>
+                    <span className="text-muted-qz">Domains:</span>{" "}
+                    {dists(generated.report.domainDistribution)}
+                  </p>
+                  <p>
+                    <span className="text-muted-qz">Difficulty:</span>{" "}
+                    {dists(generated.report.difficultyDistribution)}
+                  </p>
+                  <p>
+                    <span className="text-muted-qz">Levels:</span>{" "}
+                    {dists(generated.report.bloomDistribution)}
+                  </p>
+                </div>
+                {generated.report.notes.length > 0 && (
+                  <ul className="mt-3 space-y-1.5 border-t hairline-faint pt-3">
+                    {generated.report.notes.map((n) => (
+                      <li key={n} className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-qz">
+                        <Info className="mt-0.5 size-3 shrink-0" /> {n}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
               {/* Quality indicator */}
               <div className="edge-glow mb-4 rounded-2xl border hairline bg-[var(--qz-surface-1)] p-5">
                 <div className="flex items-center justify-between gap-4">
@@ -283,23 +395,43 @@ export default function Generate() {
                       <span className="flex items-start gap-3">
                         <span className="num mt-0.5 text-xs font-semibold text-muted-qz">Q{i + 1}</span>
                         <span className="min-w-0 flex-1 text-[13px] font-medium leading-relaxed">{q.text}</span>
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`Remove question ${i + 1}`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            removeQuestion(i);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
+                        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Regenerate question ${i + 1} keeping its domain, difficulty and level`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              regenerateQuestion(i);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                regenerateQuestion(i);
+                              }
+                            }}
+                            className="rounded-md p-1 text-muted-qz transition-colors hover:bg-white/[0.06] hover:text-[var(--qz-accent)]"
+                          >
+                            <RefreshCw className="size-3.5" />
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Remove question ${i + 1}`}
+                            onClick={(e) => {
                               e.preventDefault();
                               removeQuestion(i);
-                            }
-                          }}
-                          className="mt-0.5 shrink-0 rounded-md p-1 text-muted-qz transition-colors hover:bg-white/[0.06] hover:text-rose-300"
-                        >
-                          <X className="size-3.5" />
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                removeQuestion(i);
+                              }
+                            }}
+                            className="rounded-md p-1 text-muted-qz transition-colors hover:bg-white/[0.06] hover:text-rose-300"
+                          >
+                            <X className="size-3.5" />
+                          </span>
                         </span>
                       </span>
                     </summary>
@@ -318,8 +450,9 @@ export default function Generate() {
                         </p>
                       ))}
                       <p className="pt-1 text-xs leading-relaxed text-secondary">{q.explanation}</p>
-                      <p className="num inline-flex items-center gap-1.5 rounded-md border hairline-faint px-2 py-0.5 text-[10px] text-muted-qz">
+                      <p className="num inline-flex flex-wrap items-center gap-1.5 rounded-md border hairline-faint px-2 py-0.5 text-[10px] text-muted-qz">
                         <Info className="size-3" /> Source: {q.sourceRef} · {domainName(q.domain)} · {q.difficulty}
+                        {q.bloom ? ` · ${q.bloom}` : ""}
                       </p>
                     </div>
                   </details>
@@ -368,6 +501,11 @@ export default function Generate() {
       </section>
     </PageContainer>
   );
+}
+
+/** Compact "3× Easy · 2× Hard" formatter for distribution rows. */
+function dists(dist: { label: string; count: number }[]): string {
+  return dist.map((d) => `${d.count}× ${d.label}`).join(" · ") || "—";
 }
 
 function PublishedList() {
