@@ -63,8 +63,12 @@ const HOW = [
 export default function Landing() {
   const { isAuthenticated } = useAuth();
   const quizzes = useQuery(api.quiza.listQuizzes);
+  const profile = useQuery(api.quiza.myProfile);
   const loading = quizzes === undefined;
   const totalQuestions = (quizzes ?? []).reduce((s, q) => s + (q.questionCount ?? 0), 0);
+  // Route the primary CTA by learner state: sign in → baseline → straight to assessments.
+  const primaryCta =
+    !isAuthenticated ? "/auth" : profile === undefined ? "/dashboard" : profile ? "/assess" : "/onboarding";
 
   return (
     <div className="min-h-screen">
@@ -113,11 +117,11 @@ export default function Landing() {
                 className="mt-10 flex flex-wrap items-center gap-3"
               >
                 <Link
-                  to={isAuthenticated ? "/onboarding" : "/auth"}
+                  to={primaryCta}
                   data-cursor="hover"
                   className="btn-specular inline-flex h-11 items-center gap-2 rounded-xl px-6 text-sm font-semibold"
                 >
-                  Assess my competency <ArrowRight className="size-4" />
+                  {isAuthenticated ? "Continue your assessment" : "Assess my competency"} <ArrowRight className="size-4" />
                 </Link>
                 <a
                   href="#loop"
