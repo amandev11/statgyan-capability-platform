@@ -284,6 +284,11 @@ function detectDomains(lower: string): { id: string; hits: number }[] {
     .sort((a, b) => b.hits - a.hits);
 }
 
+/** Evidence-based mapping confidence: term-hit share relative to the strongest domain. */
+function domainConfidence(hits: number, maxHits: number): number {
+  return Math.round((0.45 + 0.5 * (hits / Math.max(maxHits, 1))) * 100) / 100;
+}
+
 export function analyzeDocument(input: {
   fileName: string;
   fileType: string;
@@ -297,7 +302,12 @@ export function analyzeDocument(input: {
   const lower = source.toLowerCase();
   const words = source.split(/\s+/).filter(Boolean).length;
   const detected = detectDomains(lower).filter((d) => d.hits > 0).slice(0, 4);
+  const maxHits = detected[0]?.hits ?? 1;
   const domains = detected.map((d) => domainName(d.id));
+  const domainConfidences = detected.map((d) => ({
+    name: domainName(d.id),
+    confidence: domainConfidence(d.hits, maxHits),
+  }));
 
   const concepts = Array.from(
     new Set(
@@ -336,6 +346,9 @@ export function analyzeDocument(input: {
     concepts: concepts.length ? concepts : ["Applied statistical procedure"],
     objectives,
     domains: domains.length ? domains : ["Official Statistics & Standards"],
+    domainConfidences: domainConfidences.length
+      ? domainConfidences
+      : [{ name: "Official Statistics & Standards", confidence: 0.45 }],
     questionOpportunities,
     difficulty,
   };
@@ -353,6 +366,7 @@ type Difficulty = "Easy" | "Medium" | "Hard";
 interface ScenarioSeed {
   domain: string;
   difficulty: Difficulty;
+  bloom: "Recall" | "Understanding" | "Application" | "Analysis";
   q: string;
   options: [string, string, string, string];
   correctIndex: number;
@@ -362,21 +376,21 @@ interface ScenarioSeed {
 /** Curated scenario bank — used alongside grounded cloze items. */
 const SCENARIO_BANK: ScenarioSeed[] = [
   {
-    domain: "survey-methodology", difficulty: "Medium",
+    domain: "survey-methodology", difficulty: "Medium", bloom: "Application",
     q: "Enumerators report that respondents in one district consistently refuse the income question. The best first response is to…",
     options: ["Delete the question", "Retrain on purpose-of-use messaging and re-test wording", "Impute incomes administratively", "Skip the district"],
     correctIndex: 1,
     explanation: "Refusals often trace to perceived risk; clarifying confidentiality and re-testing neutral wording addresses cause, not symptom.",
   },
   {
-    domain: "survey-methodology", difficulty: "Easy",
+    domain: "survey-methodology", difficulty: "Easy", bloom: "Recall",
     q: "Which questionnaire feature most reduces respondent burden?",
     options: ["Longer reference periods", "Routing patterns that skip irrelevant sections", "More open-ended questions", "Double-barrelled wording"],
     correctIndex: 1,
     explanation: "Skips tailor the path so respondents only answer what applies to them.",
   },
   {
-    domain: "sampling-estimation", difficulty: "Hard",
+    domain: "sampling-estimation", difficulty: "Hard", bloom: "Analysis",
     q: "An estimate must be published for each of 30 small districts, but only the national sample was drawn. The soundest approach is…",
     options: [
       "Publish national estimates repeated per district",
@@ -388,35 +402,35 @@ const SCENARIO_BANK: ScenarioSeed[] = [
     correctIndex: 1,
   },
   {
-    domain: "data-quality", difficulty: "Easy",
+    domain: "data-quality", difficulty: "Easy", bloom: "Recall",
     q: "During editing you find incomes recorded as 9999999 across many records. This most likely indicates…",
     options: ["Extreme wealth concentration", "A missing-value sentinel code entering raw data", "Currency conversion error", "Fraud"],
     correctIndex: 1,
     explanation: "Sentinel codes for 'not reported' commonly leak into numeric fields; they need explicit recoding before analysis.",
   },
   {
-    domain: "data-quality", difficulty: "Medium",
+    domain: "data-quality", difficulty: "Medium", bloom: "Application",
     q: "Two rounds of a survey show a sudden 15-point jump in a metric with no real-world event. Your first diagnostic should be…",
     options: ["Announce the jump publicly", "Audit collection instruments and processing between rounds", "Average away the difference", "Blame respondents"],
     correctIndex: 1,
     explanation: "Unexplained discontinuities usually trace to instrument, mode or processing changes before they reflect reality.",
   },
   {
-    domain: "statistical-analysis", difficulty: "Medium",
+    domain: "statistical-analysis", difficulty: "Medium", bloom: "Analysis",
     q: "A district's average yield rises while its median falls. The likeliest story is…",
     options: ["Everyone prospered equally", "A few very large farms pulled the mean upward", "The median is wrong", "Data entry improved"],
     correctIndex: 1,
     explanation: "Mean–median divergence in opposite directions signals right-skew introduced by extreme values.",
   },
   {
-    domain: "statistical-computing", difficulty: "Medium",
+    domain: "statistical-computing", difficulty: "Medium", bloom: "Understanding",
     q: "Your merge produces far more rows than either input. The classic culprit is…",
     options: ["Duplicate keys on one or both sides", "Too many columns", "Wrong file encoding", "Using groupby"],
     correctIndex: 0,
     explanation: "One-to-many key duplication explodes joins; validate key uniqueness before merging.",
   },
   {
-    domain: "official-statistics", difficulty: "Hard",
+    domain: "official-statistics", difficulty: "Hard", bloom: "Application",
     q: "A minister requests preliminary GDP figures two weeks earlier than scheduled. Under sound statistical practice you should…",
     options: [
       "Release immediately without review",
@@ -463,26 +477,53 @@ export function generateAssessment(
     for (const chunk of chunks) {
       const sentences = chunk.body
         .split(/(?<=[.!?])\s+/)
-        .map((s) => s.trim())
-        .filter((s) => s.split(/\s+/).length >= 8 && s.split(/\s+/).length <= 45);
+        .map((s) => s.trim());
       for (const sentence of sentences) {
         if (questions.length >= Math.ceil(config.count * 0.6)) break;
+        // Difficulty genuinely shapes selection: easier items come from short,
+        // direct statements; harder ones from longer, denser passages.
+        const wc = sentence.split(/\s+/).length;
+        if (wc < 8 || wc > 45) continue;
+        if (config.difficulty === "Easy" && wc > 24) continue;
+        if (config.difficulty === "Hard" && wc < 16) continue;
         const hit = findConceptInSentence(sentence);
         if (!hit) continue;
+        // Cognitive level shapes selection too — each level keys off different
+        // linguistic evidence in the source text.
+        const ls = sentence.toLowerCase();
+        if (config.bloom === "Recall" && wc > 30) continue;
+        if (config.bloom === "Understanding" && wc < 12) continue;
+        if (
+          config.bloom === "Application" &&
+          !/should|must|apply|use|ensure|when|before|after|procedure|step|practice/.test(ls)
+        )
+          continue;
+        if (
+          config.bloom === "Analysis" &&
+          !/because|therefore|however|whereas|leads to|results in|due to|rather than|implies|indicates/.test(ls)
+        )
+          continue;
         const domainId = domainIds[0] ?? DOMAINS[6].id;
         const distractors = LEXICON[domainId].concepts.filter((c) => c !== hit).sort(() => rnd() - 0.5).slice(0, 3);
         if (distractors.length < 3) continue;
         const cloze = sentence.replace(new RegExp(hit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "______");
         if (cloze === sentence) continue;
         const opts = [hit, ...distractors].sort(() => rnd() - 0.5);
+        const stems: Record<AssessmentConfig["bloom"], string> = {
+          Recall: "Complete, per the material",
+          Understanding: "Per the material, the concept that fills the gap is",
+          Application: "Applying the material's guidance, the blank is filled by",
+          Analysis: "Reading the material closely, the relationship described is completed by",
+          Mixed: "Complete per the material",
+        };
         push({
-          text: `Complete per the material: "${cloze}"`,
+          text: `${stems[config.bloom]}: "${cloze}"`,
           options: opts,
           correctIndex: opts.indexOf(hit),
           explanation: `The material states${chunk.page ? ` (p. ${chunk.page})` : ""}: "${sentence}"`,
           sourceRef: `Uploaded material · ${material.title}${chunk.page ? ` · p. ${chunk.page}` : ""}`,
           domain: domainId,
-          difficulty: config.difficulty === "Adaptive" ? "Medium" : config.difficulty,
+          difficulty: config.difficulty === "Adaptive" || config.difficulty === "Mixed" ? "Medium" : config.difficulty,
         });
       }
       if (questions.length >= config.count) break;
@@ -492,7 +533,10 @@ export function generateAssessment(
   // 2) Curated scenarios matching configured domains/difficulty.
   const wanted = config.domains.length ? config.domains : Object.keys(LEXICON);
   const pool = SCENARIO_BANK.filter(
-    (s) => wanted.includes(s.domain) && (config.difficulty === "Adaptive" || s.difficulty === config.difficulty || config.difficulty === "Mixed"),
+    (s) =>
+      wanted.includes(s.domain) &&
+      (config.difficulty === "Adaptive" || s.difficulty === config.difficulty || config.difficulty === "Mixed") &&
+      (config.bloom === "Mixed" || s.bloom === config.bloom),
   );
   const shuffledPool = [...pool].sort(() => rnd() - 0.5);
   for (const s of shuffledPool) {

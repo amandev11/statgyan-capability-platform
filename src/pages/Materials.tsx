@@ -52,6 +52,44 @@ function summarizeCsv(text: string): string {
   ].join("\n");
 }
 
+/**
+ * Structured JSON representation — summarise keys, value types and shape
+ * instead of feeding the raw serialisation to the analysis pipeline.
+ */
+function summarizeJson(text: string): string {
+  try {
+    const data: unknown = JSON.parse(text);
+    const describe = (v: unknown, depth: number): string => {
+      if (Array.isArray(v)) return `array[${v.length}] of ${describe(v[0], depth + 1)}`;
+      if (v === null) return "null";
+      if (depth < 2 && typeof v === "object") {
+        return Object.entries(v as Record<string, unknown>)
+          .map(([k, val]) => `${k} (${describe(val, depth + 1)})`)
+          .join(", ");
+      }
+      return typeof v === "number" ? "number" : typeof v === "boolean" ? "boolean" : typeof v === "object" ? "object" : "text";
+    };
+    if (Array.isArray(data)) {
+      return [
+        `Statistical JSON dataset: array of ${data.length} records.`,
+        `Record fields: ${describe(data[0] ?? {}, 0)}.`,
+        `Sample record: ${JSON.stringify(data[0] ?? {}).slice(0, 600)}`,
+      ].join("\n");
+    }
+    if (typeof data === "object" && data !== null) {
+      const entries = Object.entries(data as Record<string, unknown>);
+      return [
+        `Structured JSON document with ${entries.length} top-level fields.`,
+        `Fields: ${entries.map(([k, v]) => `${k} (${describe(v, 0)})`).join(", ")}.`,
+        `Preview: ${text.slice(0, 600)}`,
+      ].join("\n");
+    }
+    return text;
+  } catch {
+    return text; // malformed JSON — analyse whatever readable text exists
+  }
+}
+
 export default function Materials() {
   const save = useMutation(api.quiza.saveMaterial);
   const materials = useQuery(api.quiza.myMaterials);
@@ -94,7 +132,7 @@ export default function Materials() {
         pages = deck.units; // slide count
       } else if (!name.endsWith(".doc") && !name.endsWith(".ppt")) {
         const raw = await file.text();
-        text = name.endsWith(".csv") ? summarizeCsv(raw) : raw;
+        text = name.endsWith(".csv") ? summarizeCsv(raw) : name.endsWith(".json") ? summarizeJson(raw) : raw;
       }
     } catch (e) {
       console.warn("Extraction failed", e);
@@ -193,7 +231,17 @@ export default function Materials() {
         >
           Browse files
         </button>
-        {error && <p className="mt-3 text-sm text-rose-300" role="alert">{error}</p>}
+        {error && (
+          <div className="mt-3 flex items-center gap-3" role="alert">
+            <p className="text-sm text-rose-300">{error}</p>
+            <button
+              onClick={() => inputRef.current?.click()}
+              className="inline-flex h-8 shrink-0 items-center rounded-lg border hairline px-3 text-xs font-medium text-secondary transition-colors hover:bg-white/[0.05]"
+            >
+              Try another file
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ------------------------------------------------------- Pipeline */}
@@ -272,7 +320,11 @@ export default function Materials() {
 
           {/* Lists */}
           <div className="mt-6 grid gap-5 sm:grid-cols-2">
-            <ListBlock title="Detected domains" items={analysis.domains} accent />
+            {analysis.domainConfidences?.length ? (
+              <ConfidenceBlock items={analysis.domainConfidences} />
+            ) : (
+              <ListBlock title="Detected domains" items={analysis.domains} accent />
+            )}
             <ListBlock title="Key concepts" items={analysis.concepts} />
             <ListBlock title="Topics" items={analysis.topics} />
             <ListBlock title="Learning objectives" items={analysis.objectives} numbered />
@@ -327,6 +379,37 @@ export default function Materials() {
         )}
       </section>
     </PageContainer>
+  );
+}
+
+function ConfidenceBlock({ items }: { items: { name: string; confidence: number }[] }) {
+  return (
+    <div>
+      <p className="eyebrow mb-2">Competency mapping · confidence</p>
+      <ul className="space-y-2.5">
+        {items.map((item) => (
+          <li key={item.name}>
+            <div className="flex items-baseline justify-between gap-3 text-[13px]">
+              <span className="text-secondary">{item.name}</span>
+              <span className="num text-xs font-medium text-[var(--qz-accent)]">{Math.round(item.confidence * 100)}%</span>
+            </div>
+            <div
+              role="meter"
+              aria-label={`${item.name} mapping confidence`}
+              aria-valuenow={Math.round(item.confidence * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              className="mt-1 h-1 overflow-hidden rounded-full bg-white/[0.07]"
+            >
+              <div className="h-full rounded-full bg-[var(--qz-accent)]/70" style={{ width: `${Math.round(item.confidence * 100)}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-qz">
+        Confidence derives from domain-term frequency in the extracted text — evidence-based mapping, not a model prediction.
+      </p>
+    </div>
   );
 }
 

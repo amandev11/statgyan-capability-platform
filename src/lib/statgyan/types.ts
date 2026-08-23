@@ -50,6 +50,8 @@ export interface DocAnalysis {
   concepts: string[];
   objectives: string[];
   domains: string[];
+  /** Evidence-based mapping confidence per domain (term-hit share, 0–1). */
+  domainConfidences: { name: string; confidence: number }[];
   questionOpportunities: number;
   difficulty: Difficulty;
 }
