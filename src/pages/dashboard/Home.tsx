@@ -20,17 +20,17 @@ import {
 } from "lucide-react";
 import { Link } from "react-router";
 
-function firstName(name?: string | null, email?: string | null) {
-  const base = name || email?.split("@")[0] || "learner";
-  return base.split(/[\s._-]+/)[0]!.replace(/^\w/, (c) => c.toUpperCase());
-}
-
 const LOOP = [
   { label: "Assess", to: "/assess" },
   { label: "Analyse", to: "/competency" },
   { label: "Learn", to: "/learning" },
   { label: "Improve", to: "/assess" },
 ];
+
+function firstName(name?: string | null, email?: string | null) {
+  const base = name || email?.split("@")[0] || "learner";
+  return base.split(/[\s._-]+/)[0]!.replace(/^\w/, (c) => c.toUpperCase());
+}
 
 export default function DashboardHome() {
   const { user } = useAuth();
@@ -145,6 +145,60 @@ export default function DashboardHome() {
           />
         )}
       </motion.div>
+
+      {/* --------------------------------------------- Biggest gap centerpiece */}
+      {!loading && critical.length > 0 && (
+        <motion.section
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, delay: 0.06, ease }}
+          className="mt-10"
+          aria-label="Your biggest competency gap"
+        >
+          <p className="eyebrow mb-3">Your biggest competency gap</p>
+          <div className="edge-glow relative overflow-hidden rounded-2xl border hairline bg-[var(--qz-surface-1)] p-7 sm:p-9">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -left-24 -top-28 size-72 rounded-full opacity-50"
+              style={{ background: "radial-gradient(closest-side, rgba(248,113,113,0.12), transparent)" }}
+            />
+            <div className="relative grid gap-8 lg:grid-cols-[auto_1fr_auto] lg:items-center">
+              {/* score block */}
+              <div>
+                <p className="text-sm font-semibold text-[var(--qz-text)]">{critical[0].name}</p>
+                <p className="num mt-2 flex items-baseline gap-2">
+                  <span className="text-5xl font-semibold tracking-tight">{critical[0].current}</span>
+                  <span className="text-sm text-muted-qz">/ 100</span>
+                </p>
+                <div className="relative mt-4 h-1.5 w-52 overflow-hidden rounded-full bg-white/[0.07]">
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#5b76f2] to-[#7590ff]" style={{ width: `${critical[0].current}%` }} />
+                  <span className="absolute top-[-3px] h-[calc(100%+6px)] w-px bg-white/40" style={{ left: `${critical[0].target}%` }} aria-hidden />
+                </div>
+                <p className="num mt-2 flex gap-4 text-xs text-muted-qz">
+                  <span>Target <span className="font-medium text-secondary">{critical[0].target}</span></span>
+                  <span>Gap <span className="font-semibold text-rose-300">{critical[0].gap} pts</span></span>
+                  <span>Priority <span className={critical[0].severity === "Critical" ? "font-semibold text-rose-300" : "font-semibold text-amber-200"}>{critical[0].severity}</span></span>
+                </p>
+              </div>
+
+              {/* AI explanation */}
+              <blockquote className="border-l-2 border-[var(--qz-accent)]/40 pl-5">
+                <p className="text-sm leading-relaxed text-secondary">“{critical[0].reasoning}”</p>
+                <footer className="eyebrow mt-2">StatGyan gap engine · based on your assessment evidence</footer>
+              </blockquote>
+
+              {/* action */}
+              <Link
+                to="/learning"
+                data-cursor="hover"
+                className="btn-specular inline-flex h-11 shrink-0 items-center gap-2 self-start rounded-xl px-6 text-sm font-semibold lg:self-center"
+              >
+                Improve this competency <ArrowRight className="size-4" />
+              </Link>
+            </div>
+          </div>
+        </motion.section>
+      )}
 
       {/* -------------------------------------------------- Next best action */}
       <section className="mt-9" aria-label="Recommended next action">

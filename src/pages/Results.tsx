@@ -64,8 +64,10 @@ function ResultsBody({
     }[];
   };
 }) {
+  const profile = useQuery(api.quiza.myProfile);
   const { attempt, questions } = data;
   const verdict = verdictFor(attempt.scorePct);
+  const profileLoading = profile === undefined;
 
   // ---- Competency impact: derive per-domain deltas from this attempt ----
   const impact = useMemo(() => {
@@ -194,21 +196,48 @@ function ResultsBody({
         className="mt-14"
         aria-label="Competency impact"
       >
-        <p className="eyebrow mb-2">Competency impact</p>
-        <h2 className="text-lg font-semibold tracking-tight">Your profile just moved</h2>
-        <div className="mt-5 grid gap-2.5 sm:grid-cols-3">
-          {impact.slice(0, 6).map((d) => (
-            <div key={d.domain} className={cn("flex items-center justify-between rounded-xl border px-4 py-3", d.delta > 0 ? "border-emerald-300/[0.16] bg-emerald-400/[0.04]" : d.delta < 0 ? "border-rose-300/[0.16] bg-rose-400/[0.04]" : "hairline-faint")}>
-              <span className="truncate text-[13px] font-medium">{d.label}</span>
-              <span className={cn("num text-sm font-semibold", d.delta > 0 ? "text-emerald-300" : d.delta < 0 ? "text-rose-300" : "text-muted-qz")}>
-                {d.delta > 0 ? `+${d.delta}` : d.delta}
-              </span>
-            </div>
-          ))}
-        </div>
+        <p className="eyebrow mb-2">Competency update</p>
+        <h2 className="text-lg font-semibold tracking-tight">Before → after this assessment</h2>
+        {profileLoading || !profile ? (
+          <div className="mt-5 grid gap-2.5 sm:grid-cols-3">
+            {impact.slice(0, 6).map((d) => (
+              <div key={d.domain} className={cn("flex items-center justify-between rounded-xl border px-4 py-3", d.delta > 0 ? "border-emerald-300/[0.16] bg-emerald-400/[0.04]" : d.delta < 0 ? "border-rose-300/[0.16] bg-rose-400/[0.04]" : "hairline-faint")}>
+                <span className="truncate text-[13px] font-medium">{d.label}</span>
+                <span className={cn("num text-sm font-semibold", d.delta > 0 ? "text-emerald-300" : d.delta < 0 ? "text-rose-300" : "text-muted-qz")}>
+                  {d.delta > 0 ? `+${d.delta}` : d.delta}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {impact.slice(0, 6).map((d) => {
+              const comp = profile.competencies.find((c) => c.id === d.domain);
+              const after = comp?.score;
+              const before = after !== undefined ? after - d.delta : undefined;
+              return (
+                <div key={d.domain} className={cn("rounded-xl border px-4 py-3", d.delta > 0 ? "border-emerald-300/[0.16] bg-emerald-400/[0.04]" : d.delta < 0 ? "border-rose-300/[0.16] bg-rose-400/[0.04]" : "hairline-faint bg-white/[0.02]")}>
+                  <p className="truncate text-[13px] font-medium">{d.label}</p>
+                  <p className="num mt-1 flex items-baseline gap-2 text-xs text-muted-qz">
+                    {before !== undefined && after !== undefined ? (
+                      <>
+                        <span>{before}</span>
+                        <span aria-hidden className="text-[var(--qz-accent)]">→</span>
+                        <span className={cn("text-base font-semibold", d.delta > 0 ? "text-emerald-300" : d.delta < 0 ? "text-rose-300" : "text-secondary")}>{after}</span>
+                      </>
+                    ) : (
+                      <span className={cn("font-semibold", d.delta > 0 ? "text-emerald-300" : "text-rose-300")}>{d.delta > 0 ? `+${d.delta}` : d.delta}</span>
+                    )}
+                    {comp && <span className="ml-auto">target {comp.target}</span>}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {applied && (
           <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-300/80">
-            <Check className="size-3" /> Applied to your competency profile.
+            <Check className="size-3" /> Your competency profile has been updated — recommendations re-ranked.
           </p>
         )}
 
