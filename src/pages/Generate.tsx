@@ -53,7 +53,9 @@ export default function Generate() {
         objectives: material.objectives,
         domains: material.domains,
         questionOpportunities: material.questionOpportunities,
-        text: undefined as string | undefined,
+        // Persisted extraction powers grounded cloze questions — this is the
+        // actual link between the uploaded document and generated MCQs.
+        text: material.text as string | undefined,
       };
     }
     return null;
@@ -63,6 +65,17 @@ export default function Generate() {
     setPublished(null);
     const result = generateAssessment(sourceMaterial, config);
     setGenerated(result);
+  };
+
+  const removeQuestion = (index: number) => {
+    setGenerated((g) =>
+      g
+        ? {
+            questions: g.questions.filter((_, i) => i !== index),
+            quality: g.quality,
+          }
+        : g,
+    );
   };
 
   const publish = async () => {
@@ -262,7 +275,7 @@ export default function Generate() {
                 </ul>
               </div>
 
-              {/* Questions */}
+              {/* Questions — review before publish: inspect, remove, then publish */}
               <ol className="space-y-3">
                 {generated.questions.map((q, i) => (
                   <details key={i} className="edge-glow rounded-xl border hairline bg-[var(--qz-surface-1)] [&_summary::-webkit-details-marker]:hidden">
@@ -270,6 +283,24 @@ export default function Generate() {
                       <span className="flex items-start gap-3">
                         <span className="num mt-0.5 text-xs font-semibold text-muted-qz">Q{i + 1}</span>
                         <span className="min-w-0 flex-1 text-[13px] font-medium leading-relaxed">{q.text}</span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Remove question ${i + 1}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            removeQuestion(i);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              removeQuestion(i);
+                            }
+                          }}
+                          className="mt-0.5 shrink-0 rounded-md p-1 text-muted-qz transition-colors hover:bg-white/[0.06] hover:text-rose-300"
+                        >
+                          <X className="size-3.5" />
+                        </span>
                       </span>
                     </summary>
                     <div className="space-y-1.5 px-4 pb-4">
@@ -295,8 +326,13 @@ export default function Generate() {
                 ))}
               </ol>
 
-              {/* Publish */}
+              {/* Review status + Publish */}
               <div className="mt-6 flex flex-wrap items-center justify-end gap-3 pb-8">
+                {generated.questions.length > 0 && (
+                  <span className="mr-auto text-xs text-muted-qz">
+                    {generated.questions.length} question{generated.questions.length === 1 ? "" : "s"} ready for review — remove any you'd reject, then publish.
+                  </span>
+                )}
                 {published && (
                   <Link
                     to={`/quiz/set-${published}`}

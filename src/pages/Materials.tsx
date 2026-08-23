@@ -1,5 +1,6 @@
 import { PageContainer, SectionHeader, SkeletonBlock } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
+import { extractPdf } from "@/lib/statgyan/extract-pdf";
 import { analyzeDocument } from "@/lib/statgyan/engine";
 import { cn } from "@/lib/utils";
 import type { DocAnalysis } from "@/lib/statgyan/types";
@@ -34,7 +35,7 @@ export default function Materials() {
 
   const [dragging, setDragging] = useState(false);
   const [stage, setStage] = useState(-1); // pipeline animation index
-  const [analysis, setAnalysis] = useState<(DocAnalysis & { fileName: string; fileType: string }) | null>(null);
+  const [analysis, setAnalysis] = useState<(DocAnalysis & { fileName: string; fileType: string; pages?: number }) | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,10 +47,29 @@ export default function Materials() {
       setError("File exceeds the 8 MB limit.");
       return;
     }
-    // Read text where the browser can; binary formats fall back to honest
-    // filename-driven analysis labelled as simulated extraction.
+    // Real text extraction where the environment allows it:
+    //  · PDF  → pdf.js page-aware parsing (lazy-loaded, embeds [Page N] markers)
+    //  · TXT/CSV/MD/JSON → direct file read
+    // Binary Office formats have no reliable in-browser parser here, so they
+    // fall back to honest filename-driven analysis labelled as simulated.
     let text = "";
-    if (!/\.(pdf|docx|pptx)$/i.test(file.name)) {
+    let pages: number | undefined;
+    if (/\.pdf$/i.test(file.name)) {
+      try {
+        const pdf = await extractPdf(file);
+        text = pdf.text;
+        pages = pdf.pages;
+      } catch (e) {
+        console.warn("PDF extraction failed", e);
+        setError("Could not read this PDF — it may be encrypted or image-only. Try a text-based PDF or upload TXT/CSV.");
+        return;
+      }
+      // Scanned / image-only PDFs yield almost no text — be honest about it.
+      if (text.trim().split(/\s+/).length < 40) {
+        setError("This PDF contains no extractable text (likely scanned images). StatGyan only analyses text-based documents.");
+        return;
+      }
+    } else if (!/\.(docx|pptx)$/i.test(file.name)) {
       try {
         text = await file.text();
       } catch {
@@ -65,7 +85,7 @@ export default function Materials() {
     setStage(-1);
 
     const result = analyzeDocument({ fileName: file.name, fileType: file.type || (file.name.split(".").pop() ?? ""), text });
-    setAnalysis({ ...result, fileName: file.name, fileType: file.name.split(".").pop()?.toUpperCase() ?? "" });
+    setAnalysis({ ...result, fileName: file.name, fileType: file.name.split(".").pop()?.toUpperCase() ?? "", pages });
 
     try {
       const id = await save({
@@ -79,6 +99,8 @@ export default function Materials() {
         objectives: result.objectives,
         domains: result.domains,
         questionOpportunities: result.questionOpportunities,
+        pages,
+        text: text.slice(0, 60_000), // persisted so MCQ generation stays grounded
       });
       setSavedId(id);
     } catch (e) {
@@ -186,12 +208,17 @@ export default function Materials() {
                 <h2 className="text-lg font-semibold tracking-tight">{analysis.title}</h2>
                 <p className="num text-xs text-muted-qz">
                   ~{analysis.wordCount.toLocaleString()} words · difficulty {analysis.difficulty}
+                  {analysis.pages ? ` · ${analysis.pages} pages` : ""}
                 </p>
               </div>
             </div>
-            {analysis.simulatedExtraction && (
+            {analysis.simulatedExtraction ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-400/[0.08] px-2.5 py-1 text-[11px] font-medium text-amber-200">
                 <Info className="size-3" /> Simulated extraction (binary preview unavailable in-browser)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300/25 bg-emerald-400/[0.07] px-2.5 py-1 text-[11px] font-medium text-emerald-200">
+                <Check className="size-3" /> Real text extraction — MCQs will cite exact pages
               </span>
             )}
           </div>
@@ -252,6 +279,7 @@ export default function Materials() {
                   <p className="truncate text-sm font-medium">{m.title}</p>
                   <p className="num text-xs text-muted-qz">
                     {m.domains.slice(0, 2).join(" · ")} · {m.wordCount.toLocaleString()} words
+                    {!m.simulatedExtraction && m.pages ? ` · ${m.pages} pp.` : ""}
                   </p>
                 </div>
                 <span className="num hidden text-xs text-muted-qz sm:block">{m.questionOpportunities} question opportunities</span>

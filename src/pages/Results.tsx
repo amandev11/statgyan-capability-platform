@@ -8,7 +8,7 @@ import {
 } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
-import { domainName } from "@/lib/statgyan/engine";
+import { analyseGaps, domainName } from "@/lib/statgyan/engine";
 import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, Check, FileSearch, RotateCcw, Sparkles, X } from "lucide-react";
@@ -273,6 +273,35 @@ function ResultsBody({
             See updated recommendations <ArrowRight className="size-3.5" />
           </Link>
         </div>
+
+        {/* Next priority — recomputed from the just-updated profile, not hard-coded */}
+        {profile && !profileLoading && (() => {
+          const gaps = analyseGaps(profile.competencies, {
+            primaryDomain: profile.primaryDomain,
+            secondaryDomains: profile.secondaryDomains,
+          });
+          const next = gaps[0];
+          if (!next) return null;
+          return (
+            <div className="edge-glow mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-[var(--qz-accent)]/25 bg-[var(--qz-accent)]/[0.05] px-6 py-5" aria-label="Next recommended action">
+              <div className="min-w-0 flex-1 basis-56">
+                <p className="eyebrow mb-1">Next priority</p>
+                <p className="text-[15px] font-semibold tracking-tight">{next.name}</p>
+                <p className="num mt-0.5 text-xs text-muted-qz">
+                  {next.current} / {next.target} · gap {next.gap} pts · {next.severity.toLowerCase()}
+                </p>
+                <p className="mt-2 text-[13px] leading-relaxed text-secondary">{next.reasoning}</p>
+              </div>
+              <Link
+                to="/learning"
+                data-cursor="hover"
+                className="btn-specular inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-5 text-sm font-semibold"
+              >
+                Start learning <ArrowRight className="size-4" />
+              </Link>
+            </div>
+          );
+        })()}
 
         {/* Adaptive loop visual */}
         <div className="edge-glow mt-4 flex items-center justify-between gap-1 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-5 py-4 text-[11px] text-muted-qz sm:text-xs" aria-label="Adaptive loop">
