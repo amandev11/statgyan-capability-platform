@@ -19,7 +19,6 @@ import { Link, useSearchParams } from "react-router";
 export default function Generate() {
   const [params] = useSearchParams();
   const materialId = params.get("material");
-  const materials = useQuery(api.quiza.myMaterials);
   const material = useQuery(
     api.quiza.getMaterial,
     materialId ? { id: materialId as never } : "skip",
@@ -329,9 +328,6 @@ export default function Generate() {
       {/* -------------------------------------------------- Past generations */}
       <section className="pb-10">
         <SectionHeader eyebrow="History" title="Published assessments" />
-        {materials === undefined ? (
-          <SkeletonBlock className="h-20 rounded-2xl" />
-        ) : null}
         <PublishedList />
       </section>
     </PageContainer>

@@ -7,6 +7,7 @@ import { api } from "@/convex/_generated/api";
 import { analyseGaps, DOMAINS } from "@/lib/statgyan/engine";
 import { useQuery } from "convex/react";
 import { motion } from "framer-motion";
+import { History } from "lucide-react";
 import { PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip } from "recharts";
 import { Link } from "react-router";
 
@@ -24,6 +25,7 @@ const SEVERITY_CLS: Record<string, string> = {
 
 export default function Competency() {
   const profile = useQuery(api.quiza.myProfile);
+  const attempts = useQuery(api.quiza.myAttempts);
 
   if (profile === undefined) {
     return (
@@ -77,6 +79,12 @@ export default function Competency() {
           {significant.length} open gap{significant.length === 1 ? "" : "s"} totalling{" "}
           <span className="font-semibold text-rose-300">{shortfalls} points</span>
         </p>
+        {attempts !== undefined && attempts.length > 0 && (
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-qz">
+            <History className="size-3" />
+            Trend computed from <span className="num font-medium text-secondary">{attempts.length}</span> completed assessment{attempts.length === 1 ? "" : "s"} — every round refines this map.
+          </p>
+        )}
       </motion.div>
 
       {/* --------------------------------------------------- Map + bars */}

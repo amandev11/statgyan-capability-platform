@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { domainName } from "@/lib/statgyan/engine";
 import { useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, Check, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, FileSearch, RotateCcw, Sparkles, X } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -336,6 +336,11 @@ function ResultsBody({
                     <p className="mt-2 border-l-2 border-white/[0.08] pl-3 text-[13px] leading-relaxed text-secondary">
                       {q.explanation}
                     </p>
+                    {q.sourceRef && (
+                      <p className="num mt-3 inline-flex items-center gap-1.5 rounded-md border hairline-faint px-2 py-0.5 text-[10px] text-muted-qz">
+                        <FileSearch className="size-3" /> Source: {q.sourceRef}
+                      </p>
+                    )}
                   </div>
                 </div>
               </li>
