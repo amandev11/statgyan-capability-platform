@@ -1,6 +1,7 @@
 import { PageContainer, SectionHeader, SkeletonBlock } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
 import { extractPdf } from "@/lib/statgyan/extract-pdf";
+import { extractDocx, extractPptx } from "@/lib/statgyan/extract-office";
 import { analyzeDocument } from "@/lib/statgyan/engine";
 import { cn } from "@/lib/utils";
 import type { DocAnalysis } from "@/lib/statgyan/types";
@@ -28,6 +29,29 @@ const PIPELINE = [
 const MAX_BYTES = 8 * 1024 * 1024;
 const ACCEPT = ".pdf,.docx,.pptx,.txt,.csv,.md,.json";
 
+/**
+ * Structured CSV representation — instead of dumping raw rows, summarise
+ * headers, shape and sample values so analysis works from real structure.
+ */
+function summarizeCsv(text: string): string {
+  const lines = text.trim().split(/\r?\n/).filter((l) => l.length > 0);
+  if (lines.length < 2) return text;
+  const split = (line: string) => line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+  const headers = split(lines[0]);
+  const rows = lines.slice(1).map(split);
+  const sample = rows.slice(0, 5);
+  const colSummary = headers.map((h, i) => {
+    const values = sample.map((r) => r[i]).filter(Boolean).slice(0, 3);
+    return `${h || `Column ${i + 1}`}: ${values.join(", ")}`;
+  });
+  return [
+    `Statistical dataset with ${headers.length} columns and ${rows.length} data rows.`,
+    `Columns: ${headers.filter(Boolean).join(" | ")}`,`Sample values per column:`,
+    ...colSummary,
+    `Full dataset available for question construction on these measures.`,
+  ].join("\n");
+}
+
 export default function Materials() {
   const save = useMutation(api.quiza.saveMaterial);
   const materials = useQuery(api.quiza.myMaterials);
@@ -47,34 +71,42 @@ export default function Materials() {
       setError("File exceeds the 8 MB limit.");
       return;
     }
-    // Real text extraction where the environment allows it:
-    //  · PDF  → pdf.js page-aware parsing (lazy-loaded, embeds [Page N] markers)
-    //  · TXT/CSV/MD/JSON → direct file read
-    // Binary Office formats have no reliable in-browser parser here, so they
-    // fall back to honest filename-driven analysis labelled as simulated.
+    // Real text extraction for every format we can genuinely parse:
+    //  · PDF  → pdf.js page-aware parsing (embeds [Page N] markers)
+    //  · DOCX → fflate ZIP inflate + OOXML paragraphs ([Section: heading] markers)
+    //  · PPTX → slide-by-slide text with [Slide N] provenance
+    //  · TXT/CSV/MD/JSON → direct read
     let text = "";
     let pages: number | undefined;
-    if (/\.pdf$/i.test(file.name)) {
-      try {
+    const name = file.name.toLowerCase();
+    try {
+      if (name.endsWith(".pdf")) {
         const pdf = await extractPdf(file);
         text = pdf.text;
         pages = pdf.pages;
-      } catch (e) {
-        console.warn("PDF extraction failed", e);
-        setError("Could not read this PDF — it may be encrypted or image-only. Try a text-based PDF or upload TXT/CSV.");
-        return;
+      } else if (name.endsWith(".docx")) {
+        const doc = await extractDocx(file);
+        text = doc.text;
+        pages = doc.units; // section count — used as structural unit count
+      } else if (name.endsWith(".pptx")) {
+        const deck = await extractPptx(file);
+        text = deck.text;
+        pages = deck.units; // slide count
+      } else if (!name.endsWith(".doc") && !name.endsWith(".ppt")) {
+        const raw = await file.text();
+        text = name.endsWith(".csv") ? summarizeCsv(raw) : raw;
       }
-      // Scanned / image-only PDFs yield almost no text — be honest about it.
-      if (text.trim().split(/\s+/).length < 40) {
-        setError("This PDF contains no extractable text (likely scanned images). StatGyan only analyses text-based documents.");
-        return;
-      }
-    } else if (!/\.(docx|pptx)$/i.test(file.name)) {
-      try {
-        text = await file.text();
-      } catch {
-        text = "";
-      }
+    } catch (e) {
+      console.warn("Extraction failed", e);
+      setError(`Unable to extract readable text from this ${file.name.split(".").pop()?.toUpperCase()} file — it may be corrupted or password-protected. Try a supported format (PDF, DOCX, PPTX, TXT, CSV).`);
+      return;
+    }
+    // Legacy binary .doc/.ppt and scanned files yield no parseable text — be honest.
+    if (text.trim().split(/\s+/).length < 40) {
+      setError(name.endsWith(".doc") || name.endsWith(".ppt")
+        ? "Legacy .doc/.ppt formats aren't supported — re-save as .docx / .pptx or export to PDF."
+        : "This document contains no extractable text (likely scanned images or empty). StatGyan only analyses text-based documents.");
+      return;
     }
 
     // Animated pipeline
