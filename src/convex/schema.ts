@@ -74,6 +74,7 @@ const schema = defineSchema(
       scorePct: v.number(),
       durationMs: v.number(),
       completedAt: v.number(),
+      impactApplied: v.optional(v.boolean()), // competency deltas applied exactly once
     })
       .index("by_user", ["userId"])
       .index("by_quiz", ["quizId"])

@@ -69,42 +69,49 @@ function ResultsBody({
   const verdict = verdictFor(attempt.scorePct);
   const profileLoading = profile === undefined;
 
-  // ---- Competency impact: derive per-domain deltas from this attempt ----
-  const impact = useMemo(() => {
-    const byDomain = new Map<string, { correct: number; wrong: number }>();
+  // ---- Per-domain evidence from this attempt (instant display) ----
+  const perf = useMemo(() => {
+    const byDomain = new Map<string, { label: string; correct: number; asked: number }>();
     questions.forEach((q, i) => {
       const dom = q.domain || attempt.category;
-      const rec = byDomain.get(dom) ?? { correct: 0, wrong: 0 };
+      const rec = byDomain.get(dom) ?? { label: domainName(dom), correct: 0, asked: 0 };
+      rec.asked += 1;
       if (attempt.answers[i] === q.correctIndex) rec.correct += 1;
-      else rec.wrong += 1;
       byDomain.set(dom, rec);
     });
-    return [...byDomain.entries()]
-      .map(([dom, r]) => {
-        const delta =
-          r.correct > 0
-            ? Math.min(8, Math.max(-6, r.correct * 3 - r.wrong * 1))
-            : -Math.min(5, r.wrong);
-        return { domain: dom, label: domainName(dom), delta };
-      })
-      .sort((a, b) => b.delta - a.delta);
+    return [...byDomain.entries()].map(([domain, r]) => ({
+      domain,
+      ...r,
+      localDelta:
+        r.correct > 0
+          ? Math.min(8, Math.max(-6, r.correct * 3 - (r.asked - r.correct)))
+          : -Math.min(5, r.asked),
+    }));
   }, [attempt, questions]);
 
-  // Persist impact exactly once per result view
+  // Server-authoritative impact — computed and persisted exactly once, guarded
+  // by the backend so revisiting this page can never inflate scores.
   const appliedRef = useRef<string | null>(null);
-  const [applied, setApplied] = useState(false);
+  const [serverImpact, setServerImpact] = useState<{
+    applied: boolean;
+    deltas: { id: string; delta: number }[];
+  } | null>(null);
   const applyImpact = useMutation(api.quiza.applyCompetencyImpact);
   useEffect(() => {
     if (appliedRef.current === attempt._id) return;
     appliedRef.current = attempt._id;
-    void applyImpact({
-      deltas: impact.map((d) => ({ id: d.domain, delta: d.delta })),
-      attemptId: attempt._id,
-    })
-      .then(() => setApplied(true))
-      .catch(() => setApplied(false));
+    void applyImpact({ attemptId: attempt._id })
+      .then((r) => {
+        if (r) setServerImpact(r);
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attempt._id]);
+
+  const impact = perf.map((p) => ({
+    ...p,
+    delta: serverImpact?.deltas.find((d) => d.id === p.domain)?.delta ?? p.localDelta,
+  }));
   const durationSec = Math.round(attempt.durationMs / 1000);
   const ease = [0.22, 1, 0.36, 1] as const;
   // Best-in-session accuracy across the same quiz for delta context
@@ -198,11 +205,14 @@ function ResultsBody({
       >
         <p className="eyebrow mb-2">Competency update</p>
         <h2 className="text-lg font-semibold tracking-tight">Before → after this assessment</h2>
-        {profileLoading || !profile ? (
+        {profileLoading || !profile || !serverImpact ? (
           <div className="mt-5 grid gap-2.5 sm:grid-cols-3">
             {impact.slice(0, 6).map((d) => (
               <div key={d.domain} className={cn("flex items-center justify-between rounded-xl border px-4 py-3", d.delta > 0 ? "border-emerald-300/[0.16] bg-emerald-400/[0.04]" : d.delta < 0 ? "border-rose-300/[0.16] bg-rose-400/[0.04]" : "hairline-faint")}>
-                <span className="truncate text-[13px] font-medium">{d.label}</span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[13px] font-medium">{d.label}</span>
+                  <span className="num text-[11px] text-muted-qz">{d.correct}/{d.asked} correct</span>
+                </span>
                 <span className={cn("num text-sm font-semibold", d.delta > 0 ? "text-emerald-300" : d.delta < 0 ? "text-rose-300" : "text-muted-qz")}>
                   {d.delta > 0 ? `+${d.delta}` : d.delta}
                 </span>
@@ -228,18 +238,22 @@ function ResultsBody({
                     ) : (
                       <span className={cn("font-semibold", d.delta > 0 ? "text-emerald-300" : "text-rose-300")}>{d.delta > 0 ? `+${d.delta}` : d.delta}</span>
                     )}
-                    {comp && <span className="ml-auto">target {comp.target}</span>}
+                    <span className="ml-auto">{d.correct}/{d.asked} · target {comp?.target ?? "—"}</span>
                   </p>
                 </div>
               );
             })}
           </div>
         )}
-        {applied && (
+        {serverImpact?.applied ? (
           <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-300/80">
             <Check className="size-3" /> Your competency profile has been updated — recommendations re-ranked.
           </p>
-        )}
+        ) : serverImpact ? (
+          <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-qz">
+            <Check className="size-3" /> Impact from this round was recorded when you first completed it.
+          </p>
+        ) : null}
 
         {/* AI insight */}
         <div className="edge-glow mt-6 rounded-2xl border hairline bg-[var(--qz-surface-1)] p-6">

@@ -103,8 +103,9 @@ export const getQuizBySlug = query({
 export const getAttempt = query({
   args: { id: v.id("attempts") },
   handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
     const attempt = await ctx.db.get(id);
-    if (!attempt) return null;
+    if (!attempt || attempt.userId !== userId) return null; // owner-only
 
     // Seeded catalogue attempt
     if (attempt.quizId) {
@@ -336,34 +337,75 @@ export const myProfile = query({
   },
 });
 
-/** Apply competency deltas after an assessment (clamped 0–100). */
+/**
+ * Server-authoritative competency impact.
+ *
+ * Loads the attempt's own questions (catalogue or AI-generated), computes
+ * per-domain accuracy from the stored answers, derives explainable deltas and
+ * applies them to the learner's profile exactly once — guarded by the
+ * `impactApplied` flag so revisiting a result can never inflate scores.
+ */
 export const applyCompetencyImpact = mutation({
-  args: {
-    deltas: v.array(v.object({ id: v.string(), delta: v.number() })),
-    attemptId: v.id("attempts"),
-  },
-  handler: async (ctx, { deltas, attemptId }) => {
+  args: { attemptId: v.id("attempts") },
+  handler: async (ctx, { attemptId }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
+    const attempt = await ctx.db.get(attemptId);
+    if (!attempt || attempt.userId !== userId) return null;
+    if (attempt.impactApplied) return { applied: false as const, deltas: [] };
+
+    // Resolve this attempt's questions with their domain tags.
+    let questions: { correctIndex: number; domain?: string; order?: number }[] = [];
+    if (attempt.quizId) {
+      questions = await ctx.db
+        .query("questions")
+        .withIndex("by_quiz", (q) => q.eq("quizId", attempt.quizId!))
+        .collect();
+      questions.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    } else if (attempt.assessmentId) {
+      const assessment = await ctx.db.get(attempt.assessmentId);
+      questions = assessment?.questions ?? [];
+    }
+
+    // Per-domain evidence → transparent delta formula (same one shown in UI):
+    // delta = clamp(correct*3 − wrong*1, −6…+8); all-wrong domains get −min(5, wrong).
+    const byDomain = new Map<string, { correct: number; wrong: number }>();
+    questions.forEach((q, i) => {
+      const dom = q.domain || attempt.category;
+      const rec = byDomain.get(dom) ?? { correct: 0, wrong: 0 };
+      if (attempt.answers[i] === q.correctIndex) rec.correct += 1;
+      else rec.wrong += 1;
+      byDomain.set(dom, rec);
+    });
+    const deltas = [...byDomain.entries()].map(([id, r]) => ({
+      id,
+      delta:
+        r.correct > 0
+          ? Math.min(8, Math.max(-6, r.correct * 3 - r.wrong * 1))
+          : -Math.min(5, r.wrong),
+      correct: r.correct,
+      asked: r.correct + r.wrong,
+    }));
+
     const profile = await ctx.db
       .query("profiles")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .unique();
-    if (!profile) return false; // no profile yet; nothing to update
-
-    const comps = [...profile.competencies];
-    for (const { id, delta } of deltas) {
-      const idx = comps.findIndex((c) => c.id === id);
-      if (idx >= 0) {
-        comps[idx] = {
-          ...comps[idx],
-          score: Math.max(0, Math.min(100, comps[idx].score + delta)),
-        };
+    if (profile) {
+      const comps = [...profile.competencies];
+      for (const d of deltas) {
+        const idx = comps.findIndex((c) => c.id === d.id);
+        if (idx >= 0) {
+          comps[idx] = {
+            ...comps[idx],
+            score: Math.max(0, Math.min(100, comps[idx].score + d.delta)),
+          };
+        }
       }
+      await ctx.db.patch(profile._id, { competencies: comps });
     }
-    await ctx.db.patch(profile._id, { competencies: comps });
-    void attemptId;
-    return true;
+    await ctx.db.patch(attemptId, { impactApplied: true });
+    return { applied: true as const, deltas };
   },
 });
 
@@ -420,7 +462,12 @@ export const myMaterials = query({
 
 export const getMaterial = query({
   args: { id: v.id("materials") },
-  handler: async (ctx, { id }) => ctx.db.get(id),
+  handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
+    const material = await ctx.db.get(id);
+    if (!material || material.userId !== userId) return null; // owner-only
+    return material;
+  },
 });
 
 export const saveAssessment = mutation({
@@ -452,8 +499,9 @@ export const saveAssessment = mutation({
 export const getAssessment = query({
   args: { id: v.id("assessments") },
   handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
     const a = await ctx.db.get(id);
-    if (!a) return null;
+    if (!a || a.userId !== userId) return null; // owner-only
     return {
       title: a.title,
       description: `AI-generated assessment from: ${a.sourceLabel}`,
