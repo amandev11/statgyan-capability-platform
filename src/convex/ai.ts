@@ -18,8 +18,40 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_ATTEMPTS_PER_MODEL = 2;
+
+type Provider = "gemini" | "openrouter";
+
+interface ModelSpec {
+  provider: Provider;
+  model: string;
+}
+
+/** FREE-FIRST provider chain. Gemini joins the chain when GEMINI_API_KEY is
+ *  configured (preferred for document understanding); OpenRouter when
+ *  OPENROUTER_API_KEY is configured (preferred for generation). `prefer`
+ *  reorders the chain per task — no assignment is hard-wired into callers. */
+function providerChain(prefer: Provider): ModelSpec[] {
+  const chain: ModelSpec[] = [];
+  if (process.env.GEMINI_API_KEY?.trim()) {
+    chain.push({
+      provider: "gemini",
+      model: process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash", // free-tier default, env-overridable
+    });
+  }
+  if (process.env.OPENROUTER_API_KEY?.trim()) {
+    const primary = process.env.AI_PRIMARY_MODEL?.trim() || "openrouter/free";
+    const fallback = process.env.AI_FALLBACK_MODEL?.trim();
+    chain.push({ provider: "openrouter", model: primary });
+    if (fallback && fallback !== primary) chain.push({ provider: "openrouter", model: fallback });
+  }
+  if (prefer === "gemini") {
+    chain.sort((a, b) => Number(b.provider === "gemini") - Number(a.provider === "gemini"));
+  }
+  return chain;
+}
 
 export class AiUnavailableError extends Error {
   readonly reason:
@@ -96,17 +128,71 @@ async function callOnce(
   }
 }
 
-/** Model chain × bounded attempts with exponential backoff on transient errors.
- *  A rate-limited model is skipped to the next in the chain rather than hammered. */
-async function callModel(messages: ChatMessage[], temperature: number): Promise<{ text: string; model: string }> {
-  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) throw new AiUnavailableError("No API key configured", "no-key");
+/** Gemini REST call — system instruction + JSON response mime type. */
+async function geminiOnce(model: string, messages: ChatMessage[], temperature: number): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim() ?? "";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const system = messages.find((m) => m.role === "system")?.content;
+    const contents = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
+        role: "user" as const,
+        parts: [{ text: m.content }],
+      }));
+    const res = await fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        contents,
+        generationConfig: { temperature, maxOutputTokens: 8192, responseMimeType: "application/json" },
+      }),
+    });
+    if (res.status === 429) throw new AiUnavailableError("Rate limited", "rate-limited");
+    if (!res.ok) throw new AiUnavailableError(`Provider ${res.status}`, "provider-error");
+    const body = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
+    if (!text) throw new AiUnavailableError("Empty completion", "invalid-response");
+    return text;
+  } catch (err) {
+    if (err instanceof AiUnavailableError) throw err;
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new AiUnavailableError("Request timed out", "timeout");
+    }
+    throw new AiUnavailableError("Network failure", "provider-error");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Orchestrator: full provider chain × bounded attempts with exponential
+ *  backoff on transient errors; rate-limited or dead models are skipped to
+ *  the next entry rather than hammered. Returns provider/model provenance. */
+async function callModel(
+  messages: ChatMessage[],
+  temperature: number,
+  prefer: Provider = "openrouter",
+): Promise<{ text: string; model: string }> {
+  const chain = providerChain(prefer);
+  if (!process.env.GEMINI_API_KEY?.trim() && !process.env.OPENROUTER_API_KEY?.trim()) {
+    throw new AiUnavailableError("No API key configured", "no-key");
+  }
 
   let lastError: AiUnavailableError | undefined;
-  for (const model of modelChain()) {
+  for (const spec of chain) {
+    const apiKey = spec.provider === "openrouter" ? process.env.OPENROUTER_API_KEY?.trim() ?? "" : "";
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt++) {
       try {
-        return { text: await callOnce(apiKey, model, messages, temperature), model };
+        const text =
+          spec.provider === "gemini"
+            ? await geminiOnce(spec.model, messages, temperature)
+            : await callOnce(apiKey, spec.model, messages, temperature);
+        return { text, model: `${spec.provider}/${spec.model}` };
       } catch (err) {
         lastError = err instanceof AiUnavailableError ? err : new AiUnavailableError(String(err));
         // Non-transient failures (bad key, empty completion) move to the next model immediately.
@@ -117,7 +203,7 @@ async function callModel(messages: ChatMessage[], temperature: number): Promise<
       }
     }
   }
-  throw lastError ?? new AiUnavailableError("All models exhausted");
+  throw lastError ?? new AiUnavailableError("All providers exhausted");
 }
 
 /** Tolerant JSON extraction: strips code fences, finds the outermost object. */
@@ -189,12 +275,25 @@ Respond with STRICT JSON only, matching exactly:
 // Actions
 // ---------------------------------------------------------------------------
 
-/** Configuration probe — reports availability + model name. Never exposes keys. */
+/** Configuration probe — reports availability + model names. Never exposes keys. */
 export const aiStatus = action({
   args: {},
   handler: async () => {
-    const configured = Boolean(process.env.OPENROUTER_API_KEY?.trim());
-    return { configured, model: configured ? modelChain()[0] : null };
+    const geminiKey = Boolean(process.env.GEMINI_API_KEY?.trim());
+    const openrouterKey = Boolean(process.env.OPENROUTER_API_KEY?.trim());
+    const docChain = providerChain("gemini");
+    const genChain = providerChain("openrouter");
+    const fmt = (s: ModelSpec | undefined) => (s ? `${s.provider}/${s.model}` : null);
+    return {
+      configured: docChain.length > 0,
+      model: fmt(docChain[0]),
+      documentProvider: fmt(docChain[0]),
+      generationProvider: fmt(genChain[0]),
+      providers: {
+        gemini: geminiKey ? process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash" : null,
+        openrouter: openrouterKey ? process.env.AI_PRIMARY_MODEL?.trim() || "openrouter/free" : null,
+      },
+    };
   },
 });
 
@@ -264,6 +363,7 @@ export const analyzeMaterial = action({
           },
         ],
         0.3, // low-ish temperature: analysis should be faithful, not creative
+        "gemini", // document understanding prefers the document provider when available
       );
       modelUsed = model;
       const parsed = extractJson(raw) as PartialMap;
@@ -534,5 +634,261 @@ Write the insight explaining strongest performance, largest gap and why the reco
       throw new AiUnavailableError("Bad insight payload", "invalid-response");
     }
     return { available: true as const, insight: parsed.insight.trim() };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Material-grounded study tools — the AI layer across the whole product.
+// All prompts treat the document as UNTRUSTED DATA and demand strict JSON.
+// ---------------------------------------------------------------------------
+
+const GROUNDING_RULES =
+  `${INJECTION_GUARD}\n` +
+  "Ground EVERY claim in the supplied material. Never invent facts, page numbers, statistics or policies. " +
+  "If something is not in the material, say so plainly instead of guessing.";
+
+/** Ask this material — grounded Q&A with source provenance. */
+export const chatWithMaterial = action({
+  args: { title: v.string(), digest: v.string(), question: v.string() },
+  handler: async (_ctx, { title, digest, question }) => {
+    const { text: raw, model } = await callModel(
+      [
+        {
+          role: "system",
+          content:
+            `You are StatGyan's material tutor for India's Official Statistical System.\n\n` +
+            `Answer questions about the learning material titled "${title}".\n${GROUNDING_RULES}\n\n` +
+            `Answer style: clear, exam-focused, maximum 180 words. When the answer draws on a specific part of the ` +
+            `document, cite it inline like [Source: Page N] or [Source: Section name] exactly as labelled in the material.\n` +
+            `If the question cannot be answered from the material, say so explicitly and offer the closest related content that IS present.\n\n` +
+            `Respond with STRICT JSON only: {"answer":"...","sources":["Page N","Section ..."],"grounded":true/false}` +
+            ` where grounded=false means the material does not contain the answer.`,
+        },
+        {
+          role: "user",
+          content: `<UNTRUSTED_DOCUMENT title="${title.replace(/"/g, "'")}">\n${digest}\n</UNTRUSTED_DOCUMENT>\n\nQuestion: ${question}`,
+        },
+      ],
+      0.3,
+      "gemini",
+    );
+    const parsed = extractJson(raw) as { answer?: unknown; sources?: unknown; grounded?: unknown };
+    if (typeof parsed.answer !== "string" || parsed.answer.trim().length < 2) {
+      throw new AiUnavailableError("Bad chat payload", "invalid-response");
+    }
+    return {
+      available: true as const,
+      model,
+      answer: parsed.answer.trim(),
+      sources: asStringArray(parsed.sources).slice(0, 5),
+      grounded: parsed.grounded !== false,
+    };
+  },
+});
+
+/** Full study-notes pack generated from the actual document (Part 10). */
+export const studyNotes = action({
+  args: { title: v.string(), digest: v.string() },
+  handler: async (_ctx, { title, digest }) => {
+    const { text: raw, model } = await callModel(
+      [
+        {
+          role: "system",
+          content:
+            `You are StatGyan's study-notes generator. Produce revision material from the learning material titled "${title}".\n${GROUNDING_RULES}\n\n` +
+            `Respond with STRICT JSON only:\n{"summary":"executive summary, 3-4 sentences",` +
+            `"keyConcepts":["concept — one-line explanation"],` +
+            `"definitions":[{"term":"...","meaning":"..."}],` +
+            `"procedures":["stepwise procedures stated in the document"],` +
+            `"commonMistakes":["mistakes/confusions a learner would plausibly make with THIS content"],` +
+            `"learningObjectives":["what a learner can demonstrably do after studying"],` +
+            `"examReadyNotes":["high-yield points likely to be assessed"],` +
+            `"revisionSummary":"a tight 120-word revision brief"}\n` +
+            `Caps: keyConcepts ≤10, definitions ≤8, procedures ≤6, commonMistakes ≤6, learningObjectives ≤8, examReadyNotes ≤8.`,
+        },
+        {
+          role: "user",
+          content: `<UNTRUSTED_DOCUMENT title="${title.replace(/"/g, "'")}">\n${digest}\n</UNTRUSTED_DOCUMENT>`,
+        },
+      ],
+      0.35,
+      "gemini",
+    );
+    const p = extractJson(raw) as Record<string, unknown>;
+    if (typeof p.summary !== "string" || p.summary.length < 30) {
+      throw new AiUnavailableError("Bad notes payload", "invalid-response");
+    }
+    const defs = Array.isArray(p.definitions)
+      ? p.definitions
+          .map((d) => d as { term?: unknown; meaning?: unknown })
+          .filter((d): d is { term: string; meaning: string } => typeof d?.term === "string" && typeof d?.meaning === "string")
+          .slice(0, 8)
+      : [];
+    return {
+      available: true as const,
+      model,
+      notes: {
+        summary: p.summary.trim(),
+        keyConcepts: asStringArray(p.keyConcepts).slice(0, 10),
+        definitions: defs,
+        procedures: asStringArray(p.procedures).slice(0, 6),
+        commonMistakes: asStringArray(p.commonMistakes).slice(0, 6),
+        learningObjectives: asStringArray(p.learningObjectives).slice(0, 8),
+        examReadyNotes: asStringArray(p.examReadyNotes).slice(0, 8),
+        revisionSummary: typeof p.revisionSummary === "string" ? p.revisionSummary.trim() : "",
+      },
+    };
+  },
+});
+
+/** Document-grounded flashcards (term / definition / example / confusion). */
+export const generateFlashcards = action({
+  args: { title: v.string(), digest: v.string(), count: v.number() },
+  handler: async (_ctx, { title, digest, count }) => {
+    const n = Math.min(Math.max(Math.round(count), 4), 16);
+    const { text: raw, model } = await callModel(
+      [
+        {
+          role: "system",
+          content:
+            `You are StatGyan's flashcard generator. Create ${n} flashcards from the learning material titled "${title}".\n${GROUNDING_RULES}\n\n` +
+            `Each card tests ONE idea. Fronts are questions or terms; backs are precise answers from the document.\n` +
+            `Respond with STRICT JSON only:\n{"cards":[{"front":"...","back":"...","example":"short worked example from the doc, optional","confusion":"common confusion this card clears up, optional","sourceRef":"Page N or Section label"}]}`,
+        },
+        {
+          role: "user",
+          content: `<UNTRUSTED_DOCUMENT title="${title.replace(/"/g, "'")}">\n${digest}\n</UNTRUSTED_DOCUMENT>`,
+        },
+      ],
+      0.5,
+      "gemini",
+    );
+    const parsed = extractJson(raw) as { cards?: unknown };
+    if (!Array.isArray(parsed.cards)) throw new AiUnavailableError("Bad cards payload", "invalid-response");
+    type Card = { front: string; back: string; example?: string; confusion?: string; sourceRef?: string };
+    const cards: Card[] = [];
+    for (const c of parsed.cards) {
+      const cc = c as Partial<Card>;
+      if (typeof cc.front !== "string" || typeof cc.back !== "string") continue;
+      if (cc.front.trim().length < 4 || cc.back.trim().length < 4) continue;
+      cards.push({
+        front: cc.front.trim().slice(0, 240),
+        back: cc.back.trim().slice(0, 600),
+        example: typeof cc.example === "string" ? cc.example.slice(0, 300) : undefined,
+        confusion: typeof cc.confusion === "string" ? cc.confusion.slice(0, 300) : undefined,
+        sourceRef: typeof cc.sourceRef === "string" ? cc.sourceRef.slice(0, 80) : undefined,
+      });
+    }
+    if (cards.length === 0) throw new AiUnavailableError("No valid cards", "invalid-response");
+    return { available: true as const, model, cards };
+  },
+});
+
+/** AI-proposed blueprint (Part 11): the model inspects the material and proposes
+ *  an assessment shape; the app converts it into its own authoritative config. */
+export const proposeBlueprint = action({
+  args: { title: v.string(), digest: v.string() },
+  handler: async (_ctx, { title, digest }) => {
+    const { text: raw, model } = await callModel(
+      [
+        {
+          role: "system",
+          content:
+            `You are StatGyan's blueprint designer for India's Official Statistical System competency assessments.\n${GROUNDING_RULES}\n\n` +
+            `Inspect the material and PROPOSE the assessment blueprint its content best supports.\n` +
+            `Competency domains used by this platform: Survey Methodology, Sampling & Estimation, Data Quality, Statistical Analysis, Data Visualization, Statistical Computing, Official Statistics & Standards, Data Governance & Ethics.\n\n` +
+            `Respond with STRICT JSON only:\n{"rationale":"one sentence on why this blueprint fits the document",` +
+            `"suggestedCount":<integer 4-10>,` +
+            `"difficultyMix":{"Easy":<pct>,"Medium":<pct>,"Hard":<pct>},` +
+            `"bloomMix":{"Recall":<pct>,"Understanding":<pct>,"Application":<pct>,"Analysis":<pct>},` +
+            `"domainFocus":[{"name":"<platform domain>","weight":<pct>}],` +
+            `"questionTypes":[{"type":"conceptual|application|scenario|analysis|definition|comparison|procedure|numerical|interpretation","count":<int>}]}` +
+            ` Percentages must be integers summing to 100 within each mix; domainFocus weights must sum to 100; questionType counts must sum to suggestedCount.`,
+        },
+        {
+          role: "user",
+          content: `<UNTRUSTED_DOCUMENT title="${title.replace(/"/g, "'")}">\n${digest}\n</UNTRUSTED_DOCUMENT>`,
+        },
+      ],
+      0.3,
+      "openrouter",
+    );
+    const p = extractJson(raw) as Record<string, unknown>;
+    const pct = (v: unknown) => (typeof v === "number" && v >= 0 && v <= 100 ? Math.round(v) : null);
+    const mixes = (v: unknown): Record<string, number> | null => {
+      if (!v || typeof v !== "object") return null;
+      const out: Record<string, number> = {};
+      let any = false;
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        const n = pct(val);
+        if (n !== null) {
+          out[k] = n;
+          any = true;
+        }
+      }
+      return any ? out : null;
+    };
+    const countRaw = typeof p.suggestedCount === "number" ? Math.round(p.suggestedCount) : 0;
+    const focus = Array.isArray(p.domainFocus)
+      ? p.domainFocus
+          .map((d) => d as { name?: unknown; weight?: unknown })
+          .filter((d): d is { name: string; weight: number } => typeof d?.name === "string" && typeof d?.weight === "number" && d.weight > 0)
+          .slice(0, 4)
+      : [];
+    const types = Array.isArray(p.questionTypes)
+      ? p.questionTypes
+          .map((t) => t as { type?: unknown; count?: unknown })
+          .filter((t): t is { type: string; count: number } => typeof t?.type === "string" && typeof t?.count === "number" && t.count > 0)
+          .slice(0, 6)
+      : [];
+    return {
+      available: true as const,
+      model,
+      proposal: {
+        rationale: typeof p.rationale === "string" ? p.rationale.slice(0, 300) : "",
+        suggestedCount: Math.min(Math.max(countRaw || 6, 4), 10),
+        difficultyMix: mixes(p.difficultyMix),
+        bloomMix: mixes(p.bloomMix),
+        domainFocus: focus,
+        questionTypes: types,
+      },
+    };
+  },
+});
+
+/** Context-aware assistant reply (Part 22): real learner evidence in, concrete
+ *  coaching out. The deterministic KB stays client-side as the fallback. */
+export const assistantReply = action({
+  args: {
+    question: v.string(),
+    learnerContext: v.string(), // competency gaps/strengths summary
+    attemptsContext: v.string(), // recent assessment evidence
+    materialsContext: v.string(), // uploaded material titles/domains
+  },
+  handler: async (_ctx, { question, learnerContext, attemptsContext, materialsContext }) => {
+    const { text: raw, model } = await callModel(
+      [
+        {
+          role: "system",
+          content:
+            `You are StatGyan's learning assistant for India's Official Statistical System.\n${GROUNDING_RULES}\n\n` +
+            `You receive the learner's REAL competency context, recent assessment results and uploaded materials.\n` +
+            `Base every recommendation on that evidence — never invent scores, gaps or materials. Be concrete and task-focused: name the domain, the action, and roughly how long it should take. Maximum 140 words, plain professional prose, no motivational filler. If the learner asks about uploaded material content beyond what's summarised in the context, tell them to open that material's page for grounded answers.\n\n` +
+            `Respond with STRICT JSON only: {"answer":"..."}`,
+        },
+        {
+          role: "user",
+          content:
+            `LEARNER CONTEXT: ${learnerContext || "none recorded"}\nRECENT ASSESSMENTS: ${attemptsContext || "none"}\nUPLOADED MATERIALS: ${materialsContext || "none"}\n\nQuestion: ${question}`,
+        },
+      ],
+      0.4,
+      "openrouter",
+    );
+    const parsed = extractJson(raw) as { answer?: unknown };
+    if (typeof parsed.answer !== "string" || parsed.answer.trim().length < 20) {
+      throw new AiUnavailableError("Bad assistant payload", "invalid-response");
+    }
+    return { available: true as const, model, answer: parsed.answer.trim() };
   },
 });

@@ -40,6 +40,7 @@ export default function Generate() {
   const generateSlotCandidates = useAction(api.ai.generateSlotCandidates);
   const validateGroundingFn = useAction(api.ai.validateGrounding);
   const saveKnowledgeMap = useMutation(api.quiza.saveKnowledgeMap);
+  const proposeBlueprintFn = useAction(api.ai.proposeBlueprint);
   // Live competency evidence powers Adaptive difficulty — derived from real
   // gaps, never fabricated.
   const profile = useQuery(api.quiza.myProfile);
@@ -300,6 +301,74 @@ export default function Generate() {
       learnerContext,
     });
     commit(result);
+  };
+
+  /** AI-proposed blueprint (Part 11): the model inspects THIS document and
+   *  proposes an assessment shape; we convert it into our own authoritative
+   *  config — the blueprint stays a real contract, not prose. */
+  const [proposing, setProposing] = useState(false);
+  const proposeAiBlueprint = async () => {
+    if (!sourceMaterial?.text) return;
+    setProposing(true);
+    setGenError(null);
+    try {
+      const knowledgeMap = await ensureKnowledgeMap();
+      const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap);
+      const res = await proposeBlueprintFn({ title: sourceMaterial.title, digest });
+      const p = res.proposal;
+
+      // Snap count to the UI's supported options.
+      const counts = [4, 6, 8, 10] as const;
+      const count = counts.reduce((best, c) =>
+        Math.abs(c - p.suggestedCount) < Math.abs(best - p.suggestedCount) ? c : best,
+      );
+
+      // A mix becomes explicit only when one level dominates (≥60%); else Mixed.
+      const pickMix = (mix: Record<string, number> | null, labels: string[]): string => {
+        if (!mix) return "Mixed";
+        const total = labels.reduce((s, l) => s + (mix[l] ?? 0), 0);
+        if (total === 0) return "Mixed";
+        let top: string | null = null;
+        let topShare = 0;
+        for (const l of labels) {
+          const share = (mix[l] ?? 0) / total;
+          if (share > topShare) {
+            topShare = share;
+            top = l;
+          }
+        }
+        return top && topShare >= 0.6 ? top : "Mixed";
+      };
+
+      // Fuzzy-map proposed domain names onto platform domain ids.
+      const matched = new Set<string>();
+      for (const f of p.domainFocus) {
+        const fname = f.name.toLowerCase();
+        for (const d of DOMAINS) {
+          const dname = d.name.toLowerCase();
+          if (
+            dname.includes(fname) ||
+            fname.includes(dname) ||
+            dname.split(/[^a-z]+/).some((w) => w.length > 4 && fname.includes(w))
+          ) {
+            matched.add(d.id);
+          }
+        }
+      }
+
+      setConfig((c) => ({
+        ...c,
+        count,
+        difficulty: pickMix(p.difficultyMix, ["Easy", "Medium", "Hard"]) as AssessmentConfig["difficulty"],
+        bloom: pickMix(p.bloomMix, ["Recall", "Understanding", "Application", "Analysis"]) as AssessmentConfig["bloom"],
+        domains: matched.size > 0 ? [...matched] : c.domains,
+      }));
+      setGenError(null);
+    } catch {
+      setGenError("AI blueprint proposal unavailable right now.");
+    } finally {
+      setProposing(false);
+    }
   };
 
   /** Replace one reviewed question with a fresh candidate matching its exact
@@ -617,6 +686,26 @@ export default function Generate() {
                 })}
               </div>
             </label>
+
+            {sourceMaterial?.text && aiStatus?.configured && (
+              <button
+                onClick={() => void proposeAiBlueprint()}
+                disabled={proposing || stage !== null}
+                data-cursor="hover"
+                className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--qz-accent)]/30 bg-[var(--qz-accent)]/[0.06] text-xs font-medium text-secondary transition-colors hover:bg-[var(--qz-accent)]/[0.12] disabled:opacity-60"
+              >
+                {proposing ? (
+                  <>
+                    <Loader2 className="size-3 animate-spin" /> Inspecting material…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="size-3 text-[var(--qz-accent)]" /> Propose blueprint with AI from this
+                    material
+                  </>
+                )}
+              </button>
+            )}
 
             <button
               onClick={() => void run()}

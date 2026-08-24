@@ -9,6 +9,7 @@ import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowRight,
+  BrainCircuit,
   Check,
   FileText,
   FileUp,
@@ -331,13 +332,23 @@ export default function Materials() {
           </div>
 
           {savedId && (
-            <Link
-              to={`/generate?material=${savedId}`}
-              data-cursor="hover"
-              className="btn-specular mt-7 inline-flex h-11 items-center gap-2 rounded-xl px-6 text-sm font-semibold"
-            >
-              Generate assessment from this material <ArrowRight className="size-4" />
-            </Link>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Link
+                to={`/generate?material=${savedId}`}
+                data-cursor="hover"
+                className="btn-specular inline-flex h-11 items-center gap-2 rounded-xl px-6 text-sm font-semibold"
+              >
+                Generate assessment from this material <ArrowRight className="size-4" />
+              </Link>
+              <Link
+                to={`/materials/${savedId}`}
+                data-cursor="hover"
+                className="inline-flex h-11 items-center gap-2 rounded-xl border hairline px-5 text-sm font-medium text-secondary transition-colors hover:bg-white/[0.05]"
+              >
+                <BrainCircuit className="size-4 text-[var(--qz-accent)]" /> Document intelligence — ask, notes,
+                flashcards
+              </Link>
+            </div>
           )}
         </motion.section>
       )}
@@ -367,6 +378,12 @@ export default function Materials() {
                   </p>
                 </div>
                 <span className="num hidden text-xs text-muted-qz sm:block">{m.questionOpportunities} question opportunities</span>
+                <Link
+                  to={`/materials/${m._id}`}
+                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border hairline px-3 text-xs font-medium text-secondary transition-colors hover:bg-white/[0.05]"
+                >
+                  <BrainCircuit className="size-3" /> Intelligence
+                </Link>
                 <Link
                   to={`/generate?material=${m._id}`}
                   className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border hairline px-3 text-xs font-medium text-secondary transition-colors hover:bg-white/[0.05]"

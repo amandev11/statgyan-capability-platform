@@ -24,6 +24,7 @@ const Admin = lazy(() => import("./pages/Admin.tsx"));
 const Assistant = lazy(() => import("./pages/Assistant.tsx"));
 const Generate = lazy(() => import("./pages/Generate.tsx"));
 const Materials = lazy(() => import("./pages/Materials.tsx"));
+const MaterialDetail = lazy(() => import("./pages/MaterialDetail.tsx"));
 const QuizRunner = lazy(() => import("./pages/QuizRunner.tsx"));
 const Results = lazy(() => import("./pages/Results.tsx"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard.tsx"));
@@ -176,6 +177,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/explore" element={<Explore />} />
                 <Route path="/generate" element={<Generate />} />
                 <Route path="/materials" element={<Materials />} />
+                <Route path="/materials/:materialId" element={<MaterialDetail />} />
                 <Route path="/assistant" element={<Assistant />} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="/profile" element={<Profile />} />

@@ -1,13 +1,14 @@
 import { PageContainer, SkeletonBlock } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
-import { analyseGaps } from "@/lib/statgyan/engine";
-import { useQuery } from "convex/react";
+import { analyseGaps, domainName } from "@/lib/statgyan/engine";
+import { useAction, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   BookOpenCheck,
   BrainCircuit,
   HelpCircle,
   Lightbulb,
+  Loader2,
   Send,
   Route,
 } from "lucide-react";
@@ -75,15 +76,18 @@ function answer(query: string, ctx: { topGap?: string; lastScore?: number }): st
 export default function Assistant() {
   const profile = useQuery(api.quiza.myProfile);
   const attempts = useQuery(api.quiza.myAttempts);
+  const materials = useQuery(api.quiza.myMaterials);
+  const askAi = useAction(api.ai.assistantReply);
 
   const [turns, setTurns] = useState<Turn[]>([
     {
       role: "assistant",
       content:
-        "I'm StatGyan's learning assistant. I know your competency profile, recent assessments, learning path and uploaded materials. Ask me something task-focused.",
+        "I'm StatGyan's learning assistant. I know your competency profile, recent assessments, learning path and uploaded materials — so ask me what to study, why you missed something, or what a concept means. I'll answer from your real evidence.",
     },
   ]);
   const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   if (profile === undefined || attempts === undefined) {
@@ -104,22 +108,62 @@ export default function Assistant() {
   const topGap = gaps.find((g) => g.gap >= 6)?.name;
   const lastScore = attempts[0]?.scorePct;
 
-  const send = (text: string) => {
+  /** REAL learner evidence passed server-side — the model explains this data,
+   *  it never invents it. Falls back to the deterministic KB on failure. */
+  const learnerContext = [
+    profile?.roleTitle ? `Role: ${profile.roleTitle}` : "",
+    topGap && gaps[0] ? `Largest gap: ${topGap} (${gaps[0].current}/${gaps[0].target})` : "",
+    `Gaps: ${gaps.slice(0, 4).map((g) => `${g.name} ${g.current}/${g.target}`).join("; ") || "none recorded"}`,
+    `Strengths: ${
+      [...(profile?.competencies ?? [])]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+        .map((c) => `${domainName(c.id)} (${c.score})`)
+        .join("; ") || "none"
+    }`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const attemptsContext = attempts
+    .slice(0, 4)
+    .map((a) => `${a.quizTitle}: ${a.scorePct}%`)
+    .join("; ");
+  const materialsContext = (materials ?? [])
+    .slice(0, 5)
+    .map((m) => `${m.title} (${m.domains.slice(0, 2).join(", ")})`)
+    .join("; ");
+
+  const send = async (text: string) => {
     const query = text.trim();
-    if (!query) return;
+    if (!query || busy) return;
     setTurns((t) => [...t, { role: "user", content: query }]);
     setInput("");
-    // Deterministic demo responder — swap for LLM service behind same signature.
-    setTimeout(() => {
-      setTurns((t) => [...t, { role: "assistant", content: answer(query, { topGap, lastScore }) }]);
-    }, 350);
+    setBusy(true);
+    try {
+      const res = await askAi({ question: query, learnerContext, attemptsContext, materialsContext });
+      setTurns((t) => [...t, { role: "assistant", content: res.answer }]);
+    } catch {
+      // Honest degradation: same signature, deterministic knowledge base.
+      setTurns((t) => [
+        ...t,
+        {
+          role: "assistant",
+          content:
+            answer(query, { topGap, lastScore }) +
+            "\n\n(AI engine unreachable — answered from the built-in knowledge base.)",
+        },
+      ]);
+    } finally {
+      setBusy(false);
+      inputRef.current?.focus();
+    }
   };
 
   const QUICK = [
-    { icon: HelpCircle, label: "Why did I get this wrong?", q: "Why did I get this wrong?" },
-    { icon: Route, label: "What should I learn next?", q: "What should I learn next?" },
-    { icon: BookOpenCheck, label: "Explain stratified sampling", q: "Explain stratified sampling" },
-    { icon: Lightbulb, label: "Give me an example", q: "Give me an example" },
+    { icon: Route, label: "What should I study next?", q: "What should I study next?" },
+    { icon: HelpCircle, label: "Explain my biggest gap", q: "Explain my biggest gap" },
+    { icon: BookOpenCheck, label: "Give me a 20-minute revision plan", q: "Give me a 20-minute revision plan" },
+    { icon: Lightbulb, label: "Why did I get this wrong?", q: "Why did I get this wrong?" },
   ];
 
   return (
@@ -172,12 +216,17 @@ export default function Assistant() {
               </p>
             </div>
           ))}
+          {busy && (
+            <div className="flex items-center gap-2 pl-10 text-xs text-muted-qz">
+              <Loader2 className="size-3 animate-spin" /> Thinking with your learning context…
+            </div>
+          )}
         </div>
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            send(input);
+            void send(input);
             inputRef.current?.focus();
           }}
           className="mt-4 flex gap-2 border-t hairline-faint pt-4"

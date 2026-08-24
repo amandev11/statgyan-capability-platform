@@ -1,8 +1,10 @@
 import { PageContainer, SectionHeader } from "@/components/quiza/primitives";
+import { api } from "@/convex/_generated/api";
 import { DOMAINS } from "@/lib/statgyan/engine";
 import { ORG_DEMO, ORG_NOTE } from "@/lib/statgyan/igot";
 import { cn } from "@/lib/utils";
-import { useMemo, useState } from "react";
+import { useAction } from "convex/react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 function heatClass(score: number): string {
@@ -13,6 +15,23 @@ function heatClass(score: number): string {
 
 export default function Admin() {
   const [selected, setSelected] = useState<string | null>(null);
+
+  // AI provider status — names/models only; keys never leave the server.
+  const checkAiStatus = useAction(api.ai.aiStatus);
+  const [ai, setAi] = useState<{
+    documentProvider: string | null;
+    generationProvider: string | null;
+    providers: { gemini: string | null; openrouter: string | null };
+  } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void checkAiStatus()
+      .then((s) => live && setAi({ documentProvider: s.documentProvider ?? null, generationProvider: s.generationProvider ?? null, providers: s.providers }))
+      .catch(() => live && setAi(null));
+    return () => {
+      live = false;
+    };
+  }, [checkAiStatus]);
 
   const totals = useMemo(() => {
     const learners = ORG_DEMO.reduce((s, d) => s + d.headcount, 0);
@@ -62,6 +81,23 @@ export default function Admin() {
         <Kpi label="Avg competency" value={`${totals.orgAvg}%`} />
         <Kpi label="Learning completion" value={`${totals.completion}%`} />
         <Kpi label="Critical-gap domains" value={String(totals.weakest.length)} />
+      </section>
+
+      {/* -------------------------------------------------- AI engine status */}
+      <section className="edge-glow mt-4 rounded-2xl border hairline bg-[var(--qz-surface-1)] px-6 py-5" aria-label="AI provider status">
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-xs">
+          <p className="eyebrow">AI intelligence layer</p>
+          <StatusRow label="Document understanding" value={ai?.documentProvider ?? "checking…"} />
+          <StatusRow label="Generation provider" value={ai?.generationProvider ?? "checking…"} />
+          <StatusRow
+            label="Fallback"
+            value="StatGyan local engine"
+            muted={ai !== null}
+          />
+          <span className="ml-auto text-[10px] text-muted-qz">
+            Keys are server-side only — never exposed to the browser.
+          </span>
+        </div>
       </section>
 
       {/* ------------------------------------------------------------ Heatmap */}
@@ -198,6 +234,17 @@ export default function Admin() {
         </div>
       </section>
     </PageContainer>
+  );
+}
+
+function StatusRow({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <span className="inline-flex items-baseline gap-2">
+      <span className="text-muted-qz">{label}:</span>
+      <span className={cn("num font-medium", muted ? "text-muted-qz" : value === "checking…" ? "text-muted-qz" : "text-secondary")}>
+        {value}
+      </span>
+    </span>
   );
 }
 
