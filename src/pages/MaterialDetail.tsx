@@ -38,6 +38,8 @@ interface StudyNotes {
   commonMistakes: string[];
   learningObjectives: string[];
   examReadyNotes: string[];
+  likelyAssessmentAreas?: string[];
+  selfCheckQuestions?: string[];
   revisionSummary: string;
 }
 
@@ -264,8 +266,11 @@ function MaterialDetailBody({
         </Link>
       </div>
 
+      {/* ------------------------------------------------------ Quiz me bar */}
+      {hasText && <QuizMeBar materialId={materialId} />}
+
       <div className="mt-4 pb-12">
-        {tab === "ask" && hasText && <AskPanel title={title} digest={digest} />}
+        {tab === "ask" && hasText && <AskPanel title={title} text={text} knowledgeMap={knowledgeMap} />}
         {tab === "notes" && hasText && <NotesPanel title={title} digest={digest} />}
         {tab === "cards" && hasText && <CardsPanel title={title} digest={digest} />}
       </div>
@@ -274,10 +279,85 @@ function MaterialDetailBody({
 }
 
 // ---------------------------------------------------------------------------
+// Quiz me on this — one-click assessment straight from this document
+// ---------------------------------------------------------------------------
+
+function QuizMeBar({ materialId }: { materialId: string }) {
+  const [count, setCount] = useState(10);
+  const [difficulty, setDifficulty] = useState<"Adaptive" | "Easy" | "Medium" | "Hard">("Adaptive");
+  const href = `/generate?material=${materialId}&count=${count}&difficulty=${difficulty}&auto=1`;
+  return (
+    <section
+      className="edge-glow mt-6 rounded-2xl border border-[var(--qz-accent)]/25 bg-[var(--qz-accent)]/[0.05] p-5"
+      aria-label="Quick quiz from this material"
+    >
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1 basis-48">
+          <p className="eyebrow mb-0.5">Quiz me on this</p>
+          <p className="text-xs leading-relaxed text-muted-qz">
+            Blueprint → AI candidates → grounding check → assessment. Every question keeps its source
+            reference.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-qz">Questions</span>
+          {[5, 10, 20].map((n) => (
+            <button
+              key={n}
+              onClick={() => setCount(n)}
+              aria-pressed={count === n}
+              data-cursor="hover"
+              className={cn(
+                "num h-8 w-9 rounded-lg border text-xs font-medium transition-colors",
+                count === n
+                  ? "border-[var(--qz-accent)]/40 bg-[var(--qz-accent)]/[0.12]"
+                  : "hairline bg-white/[0.02] text-muted-qz hover:text-secondary",
+              )}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-qz">Difficulty</span>
+          {("Adaptive Easy Medium Hard".split(" ") as const).map((d) => (
+            <button
+              key={d}
+              onClick={() => setDifficulty(d)}
+              aria-pressed={difficulty === d}
+              data-cursor="hover"
+              className={cn(
+                "h-8 rounded-full border px-3 text-[11px] font-medium transition-colors",
+                difficulty === d
+                  ? "border-[var(--qz-accent)]/40 bg-[var(--qz-accent)]/[0.12]"
+                  : "hairline bg-white/[0.02] text-muted-qz hover:text-secondary",
+              )}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+        <Link to={href} data-cursor="hover" className="btn-specular inline-flex h-10 items-center gap-2 rounded-xl px-5 text-sm font-semibold">
+          Start quiz <ArrowRight className="size-4" />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Ask this material — grounded Q&A with sources
 // ---------------------------------------------------------------------------
 
-function AskPanel({ title, digest }: { title: string; digest: string }) {
+function AskPanel({
+  title,
+  text,
+  knowledgeMap,
+}: {
+  title: string;
+  text?: string;
+  knowledgeMap?: KnowledgeMap;
+}) {
   const ask = useAction(api.ai.chatWithMaterial);
   const [turns, setTurns] = useState<ChatTurn[]>([
     {
@@ -297,6 +377,9 @@ function AskPanel({ title, digest }: { title: string; digest: string }) {
     setInput("");
     setBusy(true);
     try {
+      // Retrieval is question-aware: segments are ranked across the WHOLE
+      // document against this exact question before answering.
+      const digest = buildSourceDigest(text, knowledgeMap, [q]);
       const res = await ask({ title, digest, question: q });
       setTurns((t) => [
         ...t,
@@ -470,6 +553,12 @@ function NotesPanel({ title, digest }: { title: string; digest: string }) {
           {notes.examReadyNotes.length > 0 && (
             <ListCard label="Exam-ready notes" items={notes.examReadyNotes} accent />
           )}
+          {(notes.likelyAssessmentAreas?.length ?? 0) > 0 && (
+            <ListCard label="Likely assessment areas" items={notes.likelyAssessmentAreas ?? []} accent />
+          )}
+          {(notes.selfCheckQuestions?.length ?? 0) > 0 && (
+            <ListCard label="Self-check questions" items={notes.selfCheckQuestions ?? []} numbered />
+          )}
           {notes.definitions.length > 0 && (
             <section className="edge-glow rounded-2xl border hairline bg-[var(--qz-surface-1)] p-5 sm:col-span-2">
               <p className="eyebrow mb-3">Important definitions</p>
@@ -515,15 +604,16 @@ function NotesPanel({ title, digest }: { title: string; digest: string }) {
 function CardsPanel({ title, digest }: { title: string; digest: string }) {
   const generate = useAction(api.ai.generateFlashcards);
   const [cards, setCards] = useState<Flashcard[] | null>(null);
+  const [count, setCount] = useState(8);
   const [flipped, setFlipped] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const run = async () => {
+  const run = async (forCount: number) => {
     setBusy(true);
     setError(null);
     try {
-      const res = await generate({ title, digest, count: 8 });
+      const res = await generate({ title, digest, count: forCount });
       setCards(res.cards as Flashcard[]);
       setFlipped(new Set());
     } catch {
@@ -549,11 +639,29 @@ function CardsPanel({ title, digest }: { title: string; digest: string }) {
           Flashcards with term, definition, worked example and the common confusion each card clears up — every
           back carries its page reference.
         </p>
+        <div className="mt-6 flex items-center justify-center gap-2">
+          {[8, 12, 20].map((n) => (
+            <button
+              key={n}
+              onClick={() => setCount(n)}
+              aria-pressed={count === n}
+              data-cursor="hover"
+              className={cn(
+                "num h-8 w-10 rounded-lg border text-xs font-medium transition-colors",
+                count === n
+                  ? "border-[var(--qz-accent)]/40 bg-[var(--qz-accent)]/[0.12]"
+                  : "hairline bg-white/[0.02] text-muted-qz hover:text-secondary",
+              )}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
         <button
-          onClick={() => void run()}
+          onClick={() => void run(count)}
           disabled={busy}
           data-cursor="hover"
-          className="btn-specular mt-6 inline-flex h-10 items-center gap-2 rounded-xl px-5 text-sm font-semibold disabled:opacity-60"
+          className="btn-specular mt-3 inline-flex h-10 items-center gap-2 rounded-xl px-5 text-sm font-semibold disabled:opacity-60"
         >
           {busy ? (
             <>
@@ -561,7 +669,7 @@ function CardsPanel({ title, digest }: { title: string; digest: string }) {
             </>
           ) : (
             <>
-              <Sparkles className="size-4" /> Generate flashcards
+              <Sparkles className="size-4" /> Generate {count} flashcards
             </>
           )}
         </button>
@@ -610,7 +718,7 @@ function CardsPanel({ title, digest }: { title: string; digest: string }) {
       <div className="mt-4 flex items-center justify-between">
         <p className="text-[11px] text-muted-qz">Tap a card to flip · {cards.length} cards from this document.</p>
         <button
-          onClick={() => void run()}
+          onClick={() => void run(count)}
           disabled={busy}
           data-cursor="hover"
           className="inline-flex h-8 items-center rounded-lg border hairline px-3 text-xs font-medium text-secondary transition-colors hover:bg-white/[0.05] disabled:opacity-60"

@@ -69,13 +69,67 @@ export function contentHash(text: string): string {
   return fnv1a(text).toString(36) + "-" + text.length.toString(36);
 }
 
+const STOPWORDS = new Set([
+  "this", "that", "with", "from", "have", "been", "were", "their", "which",
+  "about", "would", "could", "should", "these", "those", "there", "what",
+  "when", "where", "does", "into", "more", "most", "such", "each", "also",
+  "than", "then", "them", "they", "some", "only", "very", "must", "will",
+  "page", "slide", "section", "document", "material",
+]);
+
+/** Relevance-based retrieval across the ENTIRE document (Phase 5). Every
+ *  segment is scored against the query terms — never just the first N chunks.
+ *  Falls back to document order when scoring cannot discriminate. */
+export function retrieveSegments(
+  text: string,
+  queries: string[],
+  maxChars = 12_000,
+  maxSegs = 14,
+): { label: string; body: string }[] {
+  const segs = segmentMaterial(text);
+  if (segs.length === 0) return [];
+  const terms = new Set(
+    (queries.join(" ").toLowerCase().match(/[a-z][a-z-]{3,}/g) ?? []).filter(
+      (t) => !STOPWORDS.has(t),
+    ),
+  );
+  const scored = segs.map((seg, idx) => {
+    let score = 0;
+    if (terms.size > 0) {
+      const hay = `${seg.label}\n${seg.body}`.toLowerCase();
+      terms.forEach((t) => {
+        if (hay.includes(t)) score += t.length > 6 ? 2 : 1;
+      });
+    }
+    // Tiny positional prior keeps early-document structure from being starved.
+    return { seg, idx, score: score - idx * 0.01 };
+  });
+  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+  const chosen: typeof scored = [];
+  let used = 0;
+  for (const s of scored) {
+    if (chosen.length >= maxSegs) break;
+    const len = s.seg.body.length;
+    if (used + len > maxChars) {
+      if (chosen.length > 0) break;
+      // First segment alone over budget — still take it so the model has context.
+    }
+    chosen.push(s);
+    used += len;
+  }
+  // Restore document order for readability + stable provenance labels.
+  return chosen.sort((a, b) => a.idx - b.idx).map((s) => s.seg);
+}
+
 /** Build the compact structured context sent to the AI: knowledge map first
- *  (cheap tokens), then representative verbatim segments so snippets stay
- *  grounded in exact source wording. The full raw document is NOT re-sent once
- *  a knowledge map exists. */
+ *  (cheap tokens), then RETRIEVED verbatim segments so snippets stay grounded
+ *  in exact source wording. When `queries` are supplied (blueprint domains,
+ *  Bloom levels, chat questions…), segments are selected by relevance across
+ *  the whole document instead of a sequential first-N scan. */
 export function buildSourceDigest(
   materialText: string | undefined,
   knowledgeMap: KnowledgeMap | undefined,
+  queries: string[] = [],
 ): string {
   const parts: string[] = [];
   if (knowledgeMap && Object.keys(knowledgeMap).length > 0) {
@@ -96,13 +150,19 @@ export function buildSourceDigest(
       parts.push(`[KNOWLEDGE MAP — analysed structure of this document]\n${lines.join("\n")}`);
     }
   }
-  const budget = 9_000;
+  const budget = 11_000;
   let used = 0;
   const segs: string[] = [];
   if (materialText) {
-    for (const seg of segmentMaterial(materialText)) {
+    const effectiveQueries =
+      queries.length > 0
+        ? queries
+        : knowledgeMap?.topics?.length
+          ? knowledgeMap.topics.slice(0, 10)
+          : []; // no signal → retrieveSegments falls back near document order
+    for (const seg of retrieveSegments(materialText, effectiveQueries, budget)) {
       const chunk = `[${seg.label}]\n${seg.body}`;
-      if (used + chunk.length > budget) break;
+      if (used + chunk.length > budget && segs.length > 0) break;
       segs.push(chunk);
       used += chunk.length;
     }
@@ -111,11 +171,30 @@ export function buildSourceDigest(
   return parts.join("\n\n");
 }
 
-const GROUNDING_THRESHOLD = 0.6;
+const GROUNDING_THRESHOLD = 0.75;
+const UNIQUENESS_THRESHOLD = 0.85;
+const AMBIGUITY_THRESHOLD = 0.5;
 
-/** Minimum acceptable stage-2 grounding score for an AI question to ship. */
-export function groundingThreshold(): number {
-  return GROUNDING_THRESHOLD;
+/** Stage-2 acceptance gates (Phase 11): grounding, answer uniqueness and
+ *  ambiguity must all clear their bars, and difficulty/Bloom adherence must
+ *  hold. Verdict fields may be absent (older validators) — missing scores
+ *  never reject on their own. */
+export interface ValidationVerdict {
+  valid: boolean;
+  groundingScore: number;
+  answerUniqueness?: number;
+  ambiguity?: number;
+  difficultyOk?: boolean;
+  bloomOk?: boolean;
+}
+
+export function verdictAcceptable(v: ValidationVerdict): boolean {
+  if (!v.valid) return false;
+  if (v.groundingScore < GROUNDING_THRESHOLD) return false;
+  if (v.answerUniqueness !== undefined && v.answerUniqueness < UNIQUENESS_THRESHOLD) return false;
+  if (v.ambiguity !== undefined && v.ambiguity > AMBIGUITY_THRESHOLD) return false;
+  if (v.difficultyOk === false || v.bloomOk === false) return false;
+  return true;
 }
 /** Local validation of one candidate — structural + quality heuristics that do
  *  not need the model. Candidates failing hard checks are rejected outright. */
@@ -236,6 +315,8 @@ export interface AssembleArgs {
   generationNumber: number;
   /** Mean stage-2 grounding score across KEPT AI questions (0–1), if validated. */
   avgGrounding?: number;
+  /** Candidates rejected by stage-2 validation — surfaced in the report. */
+  validationRejected?: number;
   requestedCount: number;
   scope: string[];
   notes: string[];
@@ -347,6 +428,7 @@ export function assembleAiResult(args: AssembleArgs): GenerationResult {
       generated: aiQuestions.length,
       fallbackFilled: args.fallbackQuestions.length,
       avgGrounding: args.avgGrounding,
+      rejected: args.validationRejected,
     },
   };
 

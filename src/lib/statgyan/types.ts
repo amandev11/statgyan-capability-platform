@@ -167,7 +167,7 @@ export interface BlueprintReport {
   notes: string[];
   /** Present only when the AI pipeline contributed to this generation. */
   ai?: {
-    /** Provider/model string, e.g. "openrouter/free". */
+    /** Provider/model string, e.g. "gemini/gemini-2.0-flash". */
     provider: string;
     /** Questions delivered from AI candidates. */
     generated: number;
@@ -175,5 +175,7 @@ export interface BlueprintReport {
     fallbackFilled: number;
     /** Mean grounding score from stage-2 validation (0–1); undefined if unvalidated. */
     avgGrounding?: number;
+    /** Candidates rejected by stage-2 validation (grounding/uniqueness/adherence). */
+    rejected?: number;
   };
 }

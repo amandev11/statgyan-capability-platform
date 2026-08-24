@@ -6,6 +6,7 @@ import {
   contentHash,
   planSlots,
   selectBestCandidates,
+  verdictAcceptable,
 } from "@/lib/statgyan/ai-client";
 import type { AiCandidate, KnowledgeMap } from "@/lib/statgyan/ai-client";
 import { DOMAINS, domainName, generateAssessment } from "@/lib/statgyan/engine";
@@ -31,6 +32,17 @@ import { Link, useSearchParams } from "react-router";
 export default function Generate() {
   const [params] = useSearchParams();
   const materialId = params.get("material");
+  /** Quiz-Me deep link: /generate?material=X&count=N&difficulty=D&auto=1 */
+  const QUIZ_ME_DIFFICULTIES = ["Easy", "Medium", "Hard", "Adaptive"] as const;
+  const quizMeCountRaw = Number.parseInt(params.get("count") ?? "", 10);
+  const quizMeCount =
+    Number.isFinite(quizMeCountRaw) && quizMeCountRaw >= 4 && quizMeCountRaw <= 20
+      ? quizMeCountRaw
+      : null;
+  const quizMeDifficulty = QUIZ_ME_DIFFICULTIES.find(
+    (d) => d === params.get("difficulty"),
+  ) as AssessmentConfig["difficulty"] | undefined;
+  const quizMeAuto = params.get("auto") === "1";
   const material = useQuery(
     api.quiza.getMaterial,
     materialId ? { id: materialId as never } : "skip",
@@ -53,8 +65,8 @@ export default function Generate() {
   }, [profile]);
 
   const [config, setConfig] = useState<AssessmentConfig>({
-    count: 6,
-    difficulty: "Mixed",
+    count: quizMeCount ?? 6,
+    difficulty: quizMeDifficulty ?? "Mixed",
     bloom: "Mixed",
     domains: [],
     passingScore: 60,
@@ -90,6 +102,24 @@ export default function Generate() {
   const [aiNotice, setAiNotice] = useState<string | null>(null);
   /** Session history of delivered stems (for AI novelty + server avoid-list). */
   const stemsRef = useRef<string[]>([]);
+
+  // Cross-session anti-repetition (Phase 45): published assessments for THIS
+  // material seed the session history so "generate again" never replays them.
+  const pastAssessments = useQuery(api.quiza.myAssessments);
+  const seededPastRef = useRef(false);
+  useEffect(() => {
+    if (seededPastRef.current || pastAssessments === undefined) return;
+    seededPastRef.current = true;
+    for (const a of pastAssessments) {
+      if (!materialId || String(a.materialId ?? "") !== materialId) continue;
+      for (const q of a.questions) {
+        if (q.id) historyRef.current.add(q.id);
+        stemsRef.current.push(`${q.text} ${q.options[q.correctIndex] ?? ""}`);
+      }
+    }
+    if (stemsRef.current.length > 120) stemsRef.current = stemsRef.current.slice(-120);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastAssessments, materialId]);
 
   const sourceMaterial = useMemo(() => {
     if (material && "title" in material) {
@@ -172,7 +202,6 @@ export default function Generate() {
     let provider = aiStatus.model ?? "openrouter/free";
     try {
       const knowledgeMap = await ensureKnowledgeMap();
-      const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap);
 
       // Blueprint is authoritative: same planner the deterministic engine uses.
       setStage("Building blueprint…");
@@ -181,6 +210,15 @@ export default function Generate() {
         : sourceMaterial.domains.length
           ? sourceMaterial.domains
           : DOMAINS.map((d) => d.id);
+
+      // Retrieval is blueprint-aware (Phase 5): segments are ranked across the
+      // WHOLE document against this assessment's domains/Bloom/topics.
+      const retrievalQueries = [
+        ...scope.map(domainName),
+        ...(config.bloom !== "Mixed" ? [config.bloom] : []),
+        ...(knowledgeMap?.topics?.slice(0, 8) ?? []),
+      ];
+      const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap, retrievalQueries);
       const slots = planSlots(config, scope, learnerContext);
       if (slots.length === 0) return false;
 
@@ -207,11 +245,14 @@ export default function Generate() {
         generationNumber: next,
       });
 
-      // Stage-2 grounding validation against the actual source.
+      // Stage-2 validation against the actual source — multi-signal gates:
+      // grounding ≥ 0.75, answer uniqueness ≥ 0.85, ambiguity ≤ 0.5, plus
+      // difficulty/Bloom adherence. Failures open their slot for a retry.
       setStage("Checking source grounding…");
       let kept = selection.chosen;
       const openSlots = [...selection.unfilledSlots];
       let avgGrounding: number | undefined;
+      let rejectedCount = 0;
       if (kept.length > 0) {
         const verdicts = await validateGroundingFn({
           materialTitle: sourceMaterial.title,
@@ -230,8 +271,9 @@ export default function Generate() {
           const scores: number[] = [];
           kept.forEach((pair, i) => {
             const v = vmap.get(i);
-            if (v && (!v.valid || v.groundingScore < 0.6)) {
-              openSlots.push(pair.slot); // hallucinated / unsupported → reject
+            if (v && !verdictAcceptable(v)) {
+              rejectedCount += 1;
+              openSlots.push(pair.slot); // unsupported / ambiguous / mislabelled → reject
             } else {
               good.push(pair);
               if (v) scores.push(v.groundingScore);
@@ -270,6 +312,7 @@ export default function Generate() {
         provider,
         generationNumber: next,
         avgGrounding,
+        validationRejected: rejectedCount,
         requestedCount: config.count,
         scope,
         notes,
@@ -399,7 +442,10 @@ export default function Generate() {
       try {
         setStage("Regenerating with AI…");
         const knowledgeMap = await ensureKnowledgeMap();
-        const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap);
+        const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap, [
+          domainName(slot.domain),
+          slot.bloom,
+        ]);
         const candRes = await generateSlotCandidates({
           materialTitle: sourceMaterial.title,
           slots: [
@@ -536,6 +582,19 @@ export default function Generate() {
     }
   };
 
+  // Quiz-Me one-click (Phase 19): a deep link with auto=1 runs the pipeline
+  // exactly once, as soon as the material has loaded — through the full AI
+  // pipeline when available, or the labelled deterministic engine otherwise.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (!quizMeAuto || autoRanRef.current) return;
+    if (material === undefined) return; // wait for the query to settle
+    if (stage !== null) return;
+    autoRanRef.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
+
   return (
     <PageContainer width="default">
       <div className="max-w-xl">
@@ -609,6 +668,11 @@ export default function Generate() {
                     {n}
                   </button>
                 ))}
+                {![4, 6, 8, 10].includes(config.count) && (
+                  <span className="num inline-flex h-9 items-center rounded-lg border border-[var(--qz-accent)]/40 bg-[var(--qz-accent)]/[0.12] px-3 text-[13px] font-medium">
+                    {config.count}
+                  </span>
+                )}
               </div>
             </label>
 
@@ -823,6 +887,9 @@ export default function Generate() {
                         <span className="num text-muted-qz">
                           {" "}· grounding {Math.round(generated.report.ai.avgGrounding * 100)}%
                         </span>
+                      )}
+                      {generated.report.ai.rejected !== undefined && generated.report.ai.rejected > 0 && (
+                        <span className="num text-muted-qz"> · {generated.report.ai.rejected} rejected in validation</span>
                       )}
                       <span className="num text-muted-qz"> · {generated.report.ai.provider}</span>
                     </p>

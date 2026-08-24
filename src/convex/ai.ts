@@ -253,8 +253,9 @@ Follow the supplied assessment blueprint exactly. For each question:
 • include a short verbatim sourceSnippet (max 220 chars) supporting the correct answer
 • vary question type across: definition, conceptual, cloze, comparison, procedure, cause-effect, scenario, application, analysis, numerical, interpretation
 • avoid ambiguity, duplicate questions, duplicate options, answer-length clues and "all of the above"
-• Easy questions must be answerable from one direct statement; Medium requires connecting information; Hard requires applying or combining multiple supported concepts
-• Application/Analysis items must use realistic statistical-workforce scenarios whose facts do NOT exceed the source
+• Easy questions must be answerable from ONE direct statement; Medium requires connecting TWO supported concepts; Hard requires applying or combining multiple supported concepts — if a "Hard" question can be answered by copying a single sentence, it is mislabelled and must be rewritten or labelled Medium
+• Application items apply a method/rule from the source to a realistic statistical-workforce scenario whose facts do NOT exceed the source; Analysis items require interpreting a relationship, scenario, result or methodological choice — NOT restating a fact
+• Bloom labels are strict: Recall = remember a stated fact; Understanding = explain/interpret; Application = use a method on a situation; Analysis = compare, diagnose or infer relationships. Never label simple recall as Analysis
 • do not fabricate statistics, policies, definitions, procedures or citations
 
 If the material does not contain enough information to create a valid question for a slot, respond for that slot with {"text":"NO_VALID_QUESTION"} rather than hallucinating.
@@ -558,14 +559,17 @@ export const validateGrounding = action({
 Check each question against the material inside <SOURCE_DOCUMENT>.
 ${INJECTION_GUARD}
 For every question judge strictly:
-1. Is the question fully answerable from the source?
+1. Is the question fully answerable from the source? (groundingScore 0-1)
 2. Is the claimed correct answer supported by the source?
-3. Are all distractors clearly incorrect given the source?
-4. Is there exactly ONE defensible correct answer?
-5. No unsupported statistics, policies or citations introduced?
+3. Is EXACTLY ONE option defensibly correct? Score answerUniqueness 0-1 (1 = others clearly wrong).
+4. Is the question ambiguous? Score ambiguity 0-1 (0 = unambiguous).
+5. Do distractors represent plausible misconceptions while staying incorrect?
+6. Difficulty check: Easy must need one statement; Medium two connected concepts; Hard multiple combined concepts. Set difficultyOk=false when a Hard item is answerable by copying one sentence.
+7. Bloom check: Recall=fact, Understanding=explain, Application=apply to a situation, Analysis=compare/diagnose/infer. Set bloomOk=false when the labelling is wrong (e.g. recall presented as Analysis).
+8. No unsupported statistics, policies or citations introduced?
 
 Respond with STRICT JSON only:
-{"verdicts":[{"index":<question index>,"valid":true/false,"groundingScore":0.0-1.0,"issues":["reason strings when invalid"]}]}`,
+{"verdicts":[{"index":<question index>,"valid":true/false,"groundingScore":0.0-1.0,"answerUniqueness":0.0-1.0,"ambiguity":0.0-1.0,"difficultyOk":true/false,"bloomOk":true/false,"issues":["reason strings when invalid"]}]}`,
           },
           {
             role: "user",
@@ -578,13 +582,22 @@ Respond with STRICT JSON only:
       if (!Array.isArray(parsed.verdicts)) throw new Error("no verdicts");
       const verdicts = parsed.verdicts
         .map((vRaw) => {
-          const vv = vRaw as { index?: unknown; valid?: unknown; groundingScore?: unknown; issues?: unknown };
+          const vv = vRaw as {
+            index?: unknown; valid?: unknown; groundingScore?: unknown;
+            answerUniqueness?: unknown; ambiguity?: unknown;
+            difficultyOk?: unknown; bloomOk?: unknown; issues?: unknown;
+          };
           if (typeof vv.index !== "number") return null;
+          const clamp01 = (x: unknown) =>
+            typeof x === "number" ? Math.min(1, Math.max(0, x)) : undefined;
           return {
             index: vv.index,
             valid: vv.valid === true,
-            groundingScore:
-              typeof vv.groundingScore === "number" ? Math.min(1, Math.max(0, vv.groundingScore)) : 0.5,
+            groundingScore: clamp01(vv.groundingScore) ?? 0.5,
+            answerUniqueness: clamp01(vv.answerUniqueness),
+            ambiguity: clamp01(vv.ambiguity),
+            difficultyOk: vv.difficultyOk !== false,
+            bloomOk: vv.bloomOk !== false,
             issues: asStringArray(vv.issues),
           };
         })
@@ -703,6 +716,8 @@ export const studyNotes = action({
             `"commonMistakes":["mistakes/confusions a learner would plausibly make with THIS content"],` +
             `"learningObjectives":["what a learner can demonstrably do after studying"],` +
             `"examReadyNotes":["high-yield points likely to be assessed"],` +
+            `"likelyAssessmentAreas":["up to 5 areas of THIS document most likely to be tested"],` +
+            `"selfCheckQuestions":["up to 5 short self-test questions with no answers given"],` +
             `"revisionSummary":"a tight 120-word revision brief"}\n` +
             `Caps: keyConcepts ≤10, definitions ≤8, procedures ≤6, commonMistakes ≤6, learningObjectives ≤8, examReadyNotes ≤8.`,
         },
@@ -735,6 +750,8 @@ export const studyNotes = action({
         commonMistakes: asStringArray(p.commonMistakes).slice(0, 6),
         learningObjectives: asStringArray(p.learningObjectives).slice(0, 8),
         examReadyNotes: asStringArray(p.examReadyNotes).slice(0, 8),
+        likelyAssessmentAreas: asStringArray(p.likelyAssessmentAreas).slice(0, 5),
+        selfCheckQuestions: asStringArray(p.selfCheckQuestions).slice(0, 5),
         revisionSummary: typeof p.revisionSummary === "string" ? p.revisionSummary.trim() : "",
       },
     };
@@ -745,7 +762,7 @@ export const studyNotes = action({
 export const generateFlashcards = action({
   args: { title: v.string(), digest: v.string(), count: v.number() },
   handler: async (_ctx, { title, digest, count }) => {
-    const n = Math.min(Math.max(Math.round(count), 4), 16);
+    const n = Math.min(Math.max(Math.round(count), 4), 20);
     const { text: raw, model } = await callModel(
       [
         {
