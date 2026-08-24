@@ -27,6 +27,16 @@ export default function Generate() {
     materialId ? { id: materialId as never } : "skip",
   );
   const saveAssessment = useMutation(api.quiza.saveAssessment);
+  // Live competency evidence powers Adaptive difficulty — derived from real
+  // gaps, never fabricated.
+  const profile = useQuery(api.quiza.myProfile);
+  const learnerContext = useMemo(() => {
+    const comps = profile?.competencies;
+    if (!comps?.length) return undefined;
+    return {
+      averageGap: comps.reduce((s, c) => s + Math.max((c.target ?? 0) - (c.score ?? 0), 0), 0) / comps.length,
+    };
+  }, [profile]);
 
   const [config, setConfig] = useState<AssessmentConfig>({
     count: 6,
@@ -43,6 +53,8 @@ export default function Generate() {
   const [generationNumber, setGenerationNumber] = useState(0);
   const historyRef = useRef<Set<string>>(new Set());
   const [genError, setGenError] = useState<string | null>(null);
+  /** Config snapshot at generation time — a changed blueprint marks output stale. */
+  const [generatedFor, setGeneratedFor] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<string | null>(null);
 
@@ -67,6 +79,9 @@ export default function Generate() {
     return null;
   }, [material]);
 
+  const configKey = JSON.stringify(config);
+  const stale = generated !== null && generatedFor !== null && generatedFor !== configKey;
+
   const run = () => {
     setPublished(null);
     setGenError(null);
@@ -75,9 +90,11 @@ export default function Generate() {
     const result = generateAssessment(sourceMaterial, config, {
       generationNumber: next,
       excludeIds: [...historyRef.current],
+      learnerContext,
     });
     for (const q of result.questions) historyRef.current.add(q.id);
     setGenerated(result);
+    setGeneratedFor(configKey);
   };
 
   /** Replace one reviewed question with a fresh candidate matching its exact
@@ -106,6 +123,7 @@ export default function Generate() {
           ...historyRef.current,
           ...generated.questions.map((q) => q.id),
         ],
+        learnerContext,
       },
     );
     const replacement = result.questions[0];
@@ -306,6 +324,16 @@ export default function Generate() {
             </div>
           ) : (
             <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+              {stale && (
+                <div
+                  role="status"
+                  className="mb-4 flex items-start gap-2 rounded-xl border border-amber-300/25 bg-amber-400/[0.07] px-4 py-3 text-xs leading-relaxed text-amber-100"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  <span>Blueprint changed — these questions were built for the previous blueprint. Regenerate to match the new one.</span>
+                </div>
+              )}
+
               {genError && (
                 <div
                   role="alert"
@@ -328,10 +356,19 @@ export default function Generate() {
                     <span className="num">{generated.report.deliveredCount}/{generated.report.requestedCount}</span>
                   </p>
                   <p>
+                    <span className="text-muted-qz">Blueprint adherence:</span>{" "}
+                    <span className="num">{generated.report.adherencePct}%</span>
+                  </p>
+                  <p>
                     <span className="text-muted-qz">Sources:</span>{" "}
                     <span className="num">
                       {generated.report.sources.materialDerived} material · {generated.report.sources.scenarioFallback} bank
                     </span>
+                  </p>
+                  <p>
+                    <span className="text-muted-qz">Candidate pool:</span>{" "}
+                    <span className="num">{generated.report.candidatePoolSize}</span>
+                    <span className="text-muted-qz"> · {generated.report.sourceSegmentsUsed} source segment{generated.report.sourceSegmentsUsed === 1 ? "" : "s"}</span>
                   </p>
                   <p>
                     <span className="text-muted-qz">Domains:</span>{" "}
@@ -344,6 +381,10 @@ export default function Generate() {
                   <p>
                     <span className="text-muted-qz">Levels:</span>{" "}
                     {dists(generated.report.bloomDistribution)}
+                  </p>
+                  <p>
+                    <span className="text-muted-qz">Types:</span>{" "}
+                    {dists(generated.report.questionTypes)}
                   </p>
                 </div>
                 {generated.report.notes.length > 0 && (

@@ -17,8 +17,10 @@ import type {
   GeneratedQuestion,
   GenerationOptions,
   GapItem,
+  LearnerContext,
   LearningModule,
   MaterialRecordInput,
+  QuestionSlot,
   RoleTemplate,
 } from "./types";
 
@@ -453,6 +455,67 @@ const SCENARIO_BANK: ScenarioSeed[] = [
     correctIndex: 1,
     explanation: "Impartial release practices balance timeliness with accuracy transparently — never ad-hoc acceleration outside policy.",
   },
+  {
+    domain: "data-visualization", difficulty: "Easy", bloom: "Recall",
+    q: "Which encoding choice most risks misleading readers of a choropleth map?",
+    options: ["Unclassed colour scales with extreme outliers", "A sequential perceptually uniform palette", "Labelled class breaks in the legend", "Normalising by area population"],
+    correctIndex: 0,
+    explanation: "Uncoloured raw scales let one extreme region dominate the palette, implying gradient patterns that do not exist.",
+  },
+  {
+    domain: "data-visualization", difficulty: "Medium", bloom: "Application",
+    q: "A dashboard must compare 14 indicators across 5 states without overwhelming users. The soundest design is…",
+    options: ["One dense chart with all 70 series", "Small multiples with shared scales and a consistent colour key", "A different chart type per indicator", "Rotating animations per state"],
+    correctIndex: 1,
+    explanation: "Small multiples preserve comparability through shared axes and keys while keeping each panel readable.",
+  },
+  {
+    domain: "data-governance", difficulty: "Medium", bloom: "Application",
+    q: "A researcher requests microdata that includes village identifiers alongside household incomes. Under disclosure-control practice you should…",
+    options: [
+      "Release as-is since it is already collected",
+      "Assess re-identification risk and apply perturbation, suppression or access controls before any release",
+      "Remove only names and phone numbers",
+      "Refuse all microdata requests permanently",
+    ],
+    correctIndex: 1,
+    explanation: "Indirect identifiers can re-identify households; formal risk assessment and statistical disclosure control precede any release.",
+  },
+  {
+    domain: "data-governance", difficulty: "Hard", bloom: "Analysis",
+    q: "Public tables were produced from a file where one district contributes 80% of records for a rare category. The most likely statistical consequence is…",
+    options: ["No consequence; totals remain correct", "Disclosure risk because small counts can be attributed back to contributors", "Faster publication schedules", "Improved precision for that district"],
+    correctIndex: 1,
+    explanation: "Dominance in rare cells makes contributor attribution feasible — exactly the risk dominance rules and suppression address.",
+  },
+  {
+    domain: "statistical-analysis", difficulty: "Hard", bloom: "Understanding",
+    q: "A time series shows every December spike across ten years. Before interpreting December levels as economic growth you should…",
+    options: ["Publish December values alone", "Apply seasonal adjustment so year-on-year comparisons are like-for-like", "Delete Decembers from the data", "Average all months into one figure"],
+    correctIndex: 1,
+    explanation: "Seasonal adjustment removes recurring calendar effects so underlying movement is comparable across periods.",
+  },
+  {
+    domain: "statistical-computing", difficulty: "Hard", bloom: "Analysis",
+    q: "A pipeline produces slightly different estimates on each rerun with unchanged inputs. The first defect to suspect is…",
+    options: ["Non-deterministic ordering — e.g. iterating an unordered set before aggregation", "Too many rows", "Incorrect CSV quoting", "A slow disk"],
+    correctIndex: 0,
+    explanation: "Unstable iteration order over unordered collections is the classic cause of run-to-run drift; enforce deterministic sorting.",
+  },
+  {
+    domain: "survey-methodology", difficulty: "Medium", bloom: "Understanding",
+    q: "Why does switching data-collection mode mid-round threaten a survey's estimates?",
+    options: ["Modes cost different amounts", "Mode effects change responses, so mixing modes can bias trend comparisons", "Interviewers prefer one mode", "It does not affect estimates at all"],
+    correctIndex: 1,
+    explanation: "Mode effects shift measurement error structures; unmanaged switches break comparability across rounds.",
+  },
+  {
+    domain: "official-statistics", difficulty: "Easy", bloom: "Recall",
+    q: "Which principle requires that official statistics be released on a pre-announced schedule available to all users?",
+    options: ["Equal and ready access to official statistics", "Cost recovery for dissemination", "Respondent consent", "Microdata linkage"],
+    correctIndex: 0,
+    explanation: "Pre-announced, impartial release schedules are core to equal access under the UN Fundamental Principles.",
+  },
 ];
 
 // Deterministic identity: stable across sessions, unique per stem+source.
@@ -496,7 +559,6 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const PROCEDURAL = /\b(should|must|apply|ensure|when|before|after|procedure|step|practice|use)\b/i;
 const CAUSAL = /\b(because|therefore|however|whereas|leads to|results in|due to|rather than|implies|indicates)\b/i;
-const DEFINITIONAL = /\b(is|are|refers to|means|defined as)\b/i;
 
 function naturalBloom(sentence: string, wc: number): Bloom {
   if (PROCEDURAL.test(sentence)) return "Application";
@@ -559,9 +621,6 @@ export function segmentMaterial(text: string): Segment[] {
   return segments;
 }
 
-/** Build every valid material-grounded candidate. One candidate per
- *  (sentence × concept-occurrence); Bloom/difficulty are tagged from the
- *  sentence's own linguistic evidence so blueprint slots can match exactly. */
 /** Distractor vocabulary: readable terminology from the answer's own domain
  *  (curated concepts + longer topic terms), sprinkled with concepts the
  *  document-intelligence pass extracted elsewhere in the material. Rotated
@@ -592,79 +651,581 @@ function buildDistractors(
   return picks;
 }
 
+// --- Document knowledge extraction -------------------------------------------
+// Deterministic, local parsing of extracted text into typed learning signals.
+// Every question the engine produces traces back to one of these structures —
+// nothing is invented beyond the source.
+
+type KnowledgeKind =
+  | "definition"
+  | "procedure"
+  | "causal"
+  | "contrast"
+  | "numerical"
+  | "rule"
+  | "example";
+
+interface SentenceKnowledge {
+  segKey: string;
+  segLabel: string;
+  sentence: string;
+  kind: KnowledgeKind;
+  domains: string[];
+  subject?: string;
+  predicate?: string;
+  cause?: string;
+  effect?: string;
+  value?: string;
+}
+
+const RE_DEF = /\b(is|are)\s+(?:defined\s+as\b|referred\s+to\s+as\b)?|\brefers\s+to\b|\bmeans\b/i;
+const RE_CAUSAL = /\b(because|therefore|leads to|results in|due to|can inflate|may bias|distort|undermine)\b/i;
+const RE_CONTRAST = /\b(whereas|unlike|in contrast|compared to|rather than)\b/i;
+const RE_EXAMPLE = /\b(for example|such as|e\.g\.)\b/i;
+const RE_RULE = /\b(must|required|not allowed|may not|is required)\b/i;
+const RE_PROCEDURAL = /\b(should|must|apply|ensure|before|after|first|next|then|validate|review|document)\b/i;
+const RE_NUM = /\b\d+(?:[.,]\d+)?\s?(?:%|per cent|percent)?\b/;
+
+const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+const lowerFirst = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+const trimClause = (s: string) => s.replace(/\s+/g, " ").replace(/[.,;:]$/, "").trim();
+
+function splitAround(sentence: string, re: RegExp): { left: string; right: string } | null {
+  const m = re.exec(sentence);
+  if (!m || m.index === undefined) return null;
+  return { left: trimClause(sentence.slice(0, m.index)), right: trimClause(sentence.slice(m.index + m[0].length)) };
+}
+
+function extractKnowledge(segments: Segment[]): SentenceKnowledge[] {
+  const out: SentenceKnowledge[] = [];
+  segments.forEach((seg, si) => {
+    const segKey = `seg${si}`;
+    for (const raw of seg.body.split(/(?<=[.!?])\s+/)) {
+      const sentence = trimClause(raw);
+      const wc = sentence.split(/\s+/).length;
+      if (wc < 8 || wc > 60 || !/[a-zA-Z]{3}/.test(sentence)) continue;
+      const lower = sentence.toLowerCase();
+      const domains = Object.entries(LEXICON)
+        .filter(([, lex]) =>
+          lex.topicTerms.some((t) => lower.includes(t)) ||
+          lex.concepts.some((c) => lower.includes(c.toLowerCase())),
+        )
+        .map(([id]) => id)
+        .slice(0, 2);
+      const base = { segKey, segLabel: seg.label, sentence, domains };
+
+      const defSplit = RE_DEF.exec(sentence);
+      if (defSplit && defSplit.index > 6) {
+        out.push({
+          ...base,
+          kind: "definition",
+          subject: trimClause(sentence.slice(0, defSplit.index)),
+          predicate: trimClause(sentence.slice(defSplit.index + defSplit[0].length)),
+        });
+        continue;
+      }
+      const causalSplit = splitAround(sentence, RE_CAUSAL);
+      if (causalSplit && causalSplit.left.length > 10 && causalSplit.right.length > 10) {
+        out.push({ ...base, kind: "causal", cause: causalSplit.left, effect: cap(causalSplit.right) });
+        continue;
+      }
+      if (RE_CONTRAST.test(sentence)) {
+        out.push({ ...base, kind: "contrast", subject: trimClause(splitAround(sentence, RE_CONTRAST)?.left ?? "") });
+        continue;
+      }
+      const exSplit = splitAround(sentence, RE_EXAMPLE);
+      if (exSplit && exSplit.right.length > 8) {
+        out.push({ ...base, kind: "example", subject: exSplit.left, predicate: trimClause(exSplit.right) });
+        continue;
+      }
+      if (RE_RULE.test(sentence)) out.push({ ...base, kind: "rule" });
+      else if (RE_PROCEDURAL.test(sentence)) out.push({ ...base, kind: "procedure" });
+      const num = RE_NUM.exec(sentence);
+      if (num) out.push({ ...base, kind: "numerical", value: num[0].trim() });
+    }
+  });
+  return out;
+}
+
+// --- Near-duplicate protection -------------------------------------------------
+
+const STOPWORDS = new Set(
+  "the a an of to in on for and or is are be been by with as that this it its from at which what who whom whose how why per according material states source following based should must".split(" "),
+);
+
+/** Normalized word-bag fingerprint: catches same-question-different-punctuation
+ *  while keeping genuinely different masks of one sentence distinguishable. */
+export function fingerprint(text: string): string {
+  const normalized = text
+    .replace(/_{3,}/g, " blanktoken ")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w && !STOPWORDS.has(w))
+    .sort()
+    .join("·");
+  return normalized;
+}
+
+// --- Blueprint matrix ----------------------------------------------------------
+// Largest-remainder allocation: percentages become integer quotas that always
+// sum exactly to the requested count, with rounding handed to the largest
+// fractional remainders. No negative quotas, no lost questions.
+
+function largestRemainder(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((a, b) => a + Math.max(b, 0), 0);
+  if (total <= 0 || sum <= 0) return weights.map(() => 0);
+  const raw = weights.map((w) => (Math.max(w, 0) / sum) * total);
+  const base = raw.map(Math.floor);
+  let remaining = total - base.reduce((a, b) => a + b, 0);
+  const order = raw
+    .map((r, i) => ({ i, frac: r - Math.floor(r) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (let k = 0; k < order.length && remaining > 0; k++, remaining--) {
+    base[order[k].i]! += 1;
+  }
+  return base;
+}
+
+const ALL_DIFFICULTIES: Difficulty[] = ["Easy", "Medium", "Hard"];
+const ALL_BLOOMS: Bloom[] = ["Recall", "Understanding", "Application", "Analysis"];
+
+/** Evidence-driven Adaptive difficulty: larger measured competency gaps skew a
+ *  progression toward accessible levels; strong profiles are pushed harder.
+ *  Without learner evidence it falls back to balanced Mixed — never random. */
+function adaptiveDifficultyWeights(learner?: LearnerContext): number[] {
+  const gap = learner?.averageGap;
+  if (gap === undefined || gap === null) return [1, 1, 1];
+  if (gap >= 20) return [3, 2, 0.5];
+  if (gap >= 10) return [1.5, 2.5, 1];
+  return [0.5, 2, 2.5];
+}
+
+/** Build the full slot matrix: domain quotas × difficulty quotas × Bloom quotas.
+ *  Marginals are allocated GLOBALLY first (so Mixed always yields, say, a
+ *  fair share of Hard items regardless of how many domains are selected), then
+ *  merged greedily per slot — always exhausting the largest remaining budget.
+ *  Works for any count; every marginal sums exactly to config.count. */
+export function buildBlueprintMatrix(
+  config: AssessmentConfig,
+  scope: string[],
+  learner?: LearnerContext,
+): QuestionSlot[] {
+  if (scope.length === 0 || config.count <= 0) return [];
+  const diffPlan: Difficulty[] =
+    config.difficulty === "Mixed" || config.difficulty === "Adaptive"
+      ? ALL_DIFFICULTIES
+      : [config.difficulty as Difficulty];
+  const bloomPlan: Bloom[] = config.bloom === "Mixed" ? ALL_BLOOMS : [config.bloom as Bloom];
+  const diffWeights =
+    config.difficulty === "Adaptive" && diffPlan.length > 1
+      ? adaptiveDifficultyWeights(learner)
+      : diffPlan.map(() => 1);
+
+  // Global marginals — exact integer budgets per dimension.
+  const domainBudgets = largestRemainder(config.count, scope.map(() => 1));
+  const diffBudgets = largestRemainder(config.count, diffWeights);
+  const bloomBudgets = largestRemainder(config.count, bloomPlan.map(() => 1));
+
+  // Expand domains by quota, interleaved so multi-domain blueprints alternate.
+  const domainSequence: string[] = [];
+  let more = true;
+  while (more) {
+    more = false;
+    scope.forEach((domain, i) => {
+      if ((domainBudgets[i] ?? 0) > 0) {
+        domainBudgets[i]! -= 1;
+        domainSequence.push(domain);
+        more = true;
+      }
+    });
+  }
+
+  const argmax = (budgets: number[]) =>
+    budgets.reduce((best, v, i) => (v > budgets[best]! ? i : best), 0);
+
+  const slots: QuestionSlot[] = [];
+  for (const domain of domainSequence) {
+    const dIdx = argmax(diffBudgets);
+    const bIdx = argmax(bloomBudgets);
+    diffBudgets[dIdx]! -= 1;
+    bloomBudgets[bIdx]! -= 1;
+    slots.push({
+      slotId: `${domain}-${diffPlan[dIdx]}-${bloomPlan[bIdx]}-${slots.length}`,
+      domain,
+      difficulty: diffPlan[dIdx]!,
+      bloom: bloomPlan[bIdx]!,
+    });
+  }
+  return slots;
+}
+
+// --- Question builders ---------------------------------------------------------
+// Each builder converts one piece of extracted knowledge into a fully grounded
+// candidate. Answers and distractors come from the source document itself
+// wherever possible; domain vocabulary is only a plausibility backfill.
+
+interface BuilderContext {
+  materialTitle: string;
+  materialConcepts: string[];
+  /** All knowledge items in the document — used for cross-sentence distractors. */
+  all: SentenceKnowledge[];
+}
+
+function makeCandidate(
+  ctx: BuilderContext,
+  k: SentenceKnowledge,
+  domId: string,
+  args: {
+    generationType: GeneratedQuestion["generationType"];
+    text: string;
+    answer: string;
+    distractors: string[];
+    bloom: Bloom;
+    difficulty: Difficulty;
+    explanation?: string;
+  },
+): GeneratedQuestion | null {
+  const { text, answer, distractors } = args;
+  const opts = [answer, ...distractors.filter((d) => d && d.toLowerCase() !== answer.toLowerCase())].slice(0, 4);
+  if (opts.length < 4 || new Set(opts.map((o) => o.toLowerCase())).size !== 4) return null;
+  const provenance = k.segLabel === "document" ? ctx.materialTitle : `${ctx.materialTitle} · ${k.segLabel}`;
+  return {
+    id: stableId("mat", text, provenance),
+    text,
+    options: opts,
+    correctIndex: 0,
+    explanation:
+      args.explanation ??
+      `The material states${k.segLabel === "document" ? "" : ` (${k.segLabel})`}: “${k.sentence}”`,
+    sourceRef: `Uploaded material · ${provenance}`,
+    domain: domId,
+    difficulty: args.difficulty,
+    bloom: args.bloom,
+    generationType: args.generationType,
+    sourceSnippet: k.sentence.slice(0, 220),
+    sourceSegmentId: k.segKey,
+  };
+}
+
+/** Sentences usable as plausible-but-incorrect statement options: real source
+ *  sentences from elsewhere in the document that do NOT mention the anchor —
+  * so they can never be defensible answers to this stem. */
+function statementDistractors(
+  ctx: BuilderContext,
+  k: SentenceKnowledge,
+  excludeAnchor: string,
+): string[] {
+  const anchorProbe = (excludeAnchor ?? "").toLowerCase().split(/\s+/)[0] ?? "";
+  const out: string[] = [];
+  for (const other of ctx.all) {
+    if (other.segKey === k.segKey && other.sentence === k.sentence) continue;
+    if (anchorProbe && other.sentence.toLowerCase().includes(anchorProbe)) continue;
+    const t = cap(trimClause(other.sentence));
+    if (!out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+function buildCandidatesFor(k: SentenceKnowledge, ctx: BuilderContext, domId: string): GeneratedQuestion[] {
+  const out: GeneratedQuestion[] = [];
+  const rot = fnv1a(k.sentence + domId);
+  const wc = k.sentence.split(/\s+/).length;
+
+  if (k.kind === "definition" && k.subject && k.predicate) {
+    const answer = cap(k.predicate);
+    // Prefer predicates from OTHER definitions in the same document as
+    // distractors — plausible, domain-relevant, clearly not this definition.
+    const others = ctx.all
+      .filter((o) => o.kind === "definition" && o.sentence !== k.sentence && o.predicate)
+      .map((o) => cap(o.predicate!));
+    const backfill = buildDistractors(domId, answer, ctx.materialConcepts, rot);
+    const c = makeCandidate(ctx, k, domId, {
+      generationType: "material-definition",
+      text: `According to the material, ${lowerFirst(k.subject)} is best described as…`,
+      answer,
+      distractors: [...others, ...backfill],
+      bloom: "Understanding",
+      difficulty: k.predicate.split(/\s+/).length > 14 ? "Medium" : "Easy",
+    });
+    if (c) out.push(c);
+  }
+
+  if (k.kind === "causal" && k.cause && k.effect) {
+    const hard = wc >= 24;
+    const effectDistractors = ctx.all
+      .filter((o) => o.kind === "causal" && o.effect && o.sentence !== k.sentence)
+      .map((o) => o.effect!);
+    const causeDistractors = ctx.all
+      .filter((o) => o.kind === "causal" && o.cause && o.sentence !== k.sentence)
+      .map((o) => trimClause(o.cause!));
+    const consequence = makeCandidate(ctx, k, domId, {
+      generationType: "material-causal",
+      text: `According to the material, what is a likely consequence of ${lowerFirst(trimClause(k.cause))}?`,
+      answer: k.effect,
+      distractors: [...effectDistractors, ...buildDistractors(domId, k.effect, ctx.materialConcepts, rot)],
+      bloom: "Analysis",
+      difficulty: hard ? "Hard" : "Medium",
+    });
+    if (consequence) out.push(consequence);
+    // Reverse-direction diagnostic — genuinely higher-order: given the outcome,
+    // identify the underlying condition the material names.
+    if (hard) {
+      const diag = makeCandidate(ctx, k, domId, {
+        generationType: "material-analysis",
+        text: `A review team observes the following outcome: “${lowerFirst(k.effect)}”. Drawing only on the material, which underlying condition does this most likely reflect?`,
+        answer: cap(trimClause(k.cause)),
+        distractors: [...causeDistractors, ...buildDistractors(domId, k.cause, ctx.materialConcepts, rot + 7)],
+        bloom: "Analysis",
+        difficulty: "Hard",
+      });
+      if (diag) out.push(diag);
+    }
+  }
+
+  if ((k.kind === "procedure" || k.kind === "rule") && wc >= 10) {
+    const guidance = cap(k.sentence);
+    const wrongs = statementDistractors(ctx, k, firstContentWord(k.sentence));
+    if (wrongs.length >= 3) {
+      const anchorTopic = firstContentPhrase(k.sentence, domId);
+      const application = k.kind === "rule" || RE_PROCEDURAL.test(k.sentence);
+      const c = makeCandidate(ctx, k, domId, {
+        generationType: application ? "material-application" : "material-procedure",
+        text:
+          rot % 2 === 0
+            ? `A statistical officer encounters a situation involving ${anchorTopic}. Based on the documented guidance, which statement matches what the material requires?`
+            : `Which requirement does the material state regarding ${anchorTopic}?`,
+        answer: guidance,
+        distractors: wrongs,
+        bloom: "Application",
+        difficulty: wc >= 25 ? "Hard" : "Medium",
+      });
+      if (c) out.push(c);
+      // Rule-application variant framed as a compliance check.
+      if (k.kind === "rule") {
+        const rule = makeCandidate(ctx, k, domId, {
+          generationType: "material-rule",
+          text: `During a quality review, which of the following practices is required by the material's rules on ${anchorTopic}?`,
+          answer: guidance,
+          distractors: [...wrongs].reverse(),
+          bloom: "Application",
+          difficulty: "Medium",
+        });
+        if (rule) out.push(rule);
+      }
+    }
+  }
+
+  if (k.kind === "contrast") {
+    const wrongs = statementDistractors(ctx, k, firstContentWord(k.sentence)).filter(
+      (s) => !/whereas|unlike|in contrast|rather than/i.test(s),
+    );
+    if (wrongs.length >= 3) {
+      const c = makeCandidate(ctx, k, domId, {
+        generationType: "material-comparison",
+        text: "Which statement correctly captures a distinction drawn in the material?",
+        answer: cap(k.sentence),
+        distractors: wrongs,
+        bloom: wc >= 22 ? "Analysis" : "Understanding",
+        difficulty: wc >= 22 ? "Hard" : "Medium",
+      });
+      if (c) out.push(c);
+    }
+  }
+
+  if (k.kind === "example" && k.subject && k.predicate) {
+    const exampleDistractors = ctx.all
+      .filter((o) => o.kind === "example" && o.predicate && o.sentence !== k.sentence)
+      .map((o) => cap(o.predicate!));
+    const c = makeCandidate(ctx, k, domId, {
+      generationType: "material-example",
+      text: `The material illustrates its guidance with examples. Which of the following matches the example given for ${lowerFirst(trimClause(k.subject))}?`,
+      answer: cap(k.predicate),
+      distractors: [...exampleDistractors, ...buildDistractors(domId, k.predicate, ctx.materialConcepts, rot)],
+      bloom: "Application",
+      difficulty: "Medium",
+    });
+    if (c) out.push(c);
+  }
+
+  if (k.kind === "numerical" && k.value) {
+    const perturbed = numericPerturbations(k.value);
+    if (perturbed.length >= 3) {
+      const masked = k.sentence.replace(new RegExp(escapeRe(k.value), "i"), "______");
+      const c = makeCandidate(ctx, k, domId, {
+        generationType: "material-numerical",
+        text: `Complete the figure exactly as the material states it — “${masked}”`,
+        answer: k.value,
+        distractors: perturbed,
+        bloom: "Recall",
+        difficulty: "Easy",
+      });
+      if (c) out.push(c);
+    }
+  }
+
+  return out;
+}
+
+/** Human-readable labels for the question-type distribution report. */
+const TYPE_LABELS: Record<GeneratedQuestion["generationType"], string> = {
+  "material-definition": "Definition",
+  "material-cloze": "Concept cloze",
+  "material-procedure": "Procedure",
+  "material-rule": "Rule application",
+  "material-causal": "Cause/effect",
+  "material-comparison": "Comparison",
+  "material-application": "Application scenario",
+  "material-analysis": "Diagnostic analysis",
+  "material-example": "Example-based",
+  "material-numerical": "Numerical",
+  scenario: "Curated scenario",
+};
+
+function firstContentWord(sentence: string): string {
+  const words = sentence.split(/\s+/).filter((w) => !STOPWORDS.has(w.toLowerCase().replace(/[^a-z]/g, "")));
+  return words[0]?.replace(/[^\w-]/g, "") ?? "";
+}
+
+function firstContentPhrase(sentence: string, domId: string): string {
+  const lower = sentence.toLowerCase();
+  const lex = LEXICON[domId];
+  const term = [...lex.topicTerms].sort((a, b) => b.length - a.length).find((t) => lower.includes(t));
+  return term ?? lowerFirst(firstContentWord(sentence) || "this area");
+}
+
+/** Format-preserving numeric perturbations — plausible but provably different
+ *  from the value stated in the source. Only used as WRONG options; the source
+ *  number is always the single correct answer. */
+function numericPerturbations(value: string): string[] {
+  const m = /^(.*?)(\d+(?:[.,]\d+)?)(.*)$/.exec(value);
+  if (!m) return [];
+  const [, pre, numStr, post] = m;
+  const n = parseFloat(numStr.replace(",", "."));
+  if (!Number.isFinite(n)) return [];
+  const decimals = numStr.includes(".") ? numStr.split(".")[1]!.length : 0;
+  const fmt = (x: number) => `${pre}${x.toFixed(decimals)}${post}`;
+  const candidates = [n * 2, n / 2, n + Math.max(1, Math.round(n * 0.25)), Math.max(0, n - Math.max(1, Math.round(n * 0.15)))];
+  const seen = new Set([numStr]);
+  const out: string[] = [];
+  for (const c of candidates) {
+    const s = fmt(c);
+    if (!seen.has(s.replace(".", ",")) && !seen.has(s)) {
+      seen.add(s);
+      out.push(s);
+    }
+    if (out.length === 3) break;
+  }
+  return out;
+}
+
+// --- Candidate pool -------------------------------------------------------------
+// One document → many question opportunities. The pool is built ONCE per
+// material (WeakMap cache) and must substantially exceed the requested count
+// so blueprint selection and regeneration have genuine alternatives.
+
+const POOL_CAP = 600;
+const poolCache = new WeakMap<MaterialRecordInput, GeneratedQuestion[]>();
+
+/** Anchor-aware cloze variants: mask each meaningful term in turn so one
+ *  sentence yields multiple valid questions across generations. */
+function clozeVariants(
+  k: SentenceKnowledge,
+  ctx: BuilderContext,
+  domId: string,
+  maxVariants: number,
+): GeneratedQuestion[] {
+  const out: GeneratedQuestion[] = [];
+  const sentence = k.sentence;
+  const wc = sentence.split(/\s+/).length;
+  const rot = fnv1a(sentence + "cloze");
+  const lowerSentence = sentence.toLowerCase();
+  const lex = LEXICON[domId];
+  const anchors: string[] = [];
+  for (const concept of lex.concepts) {
+    if (lowerSentence.includes(concept.toLowerCase())) anchors.push(concept);
+  }
+  for (const term of [...lex.topicTerms].sort((a, b) => b.length - a.length)) {
+    if (anchors.length >= maxVariants) break;
+    if (!lowerSentence.includes(term)) continue;
+    const idx = lowerSentence.indexOf(term);
+    let sIdx = idx;
+    let eIdx = idx + term.length;
+    while (sIdx > 0 && /[\w-]/.test(sentence[sIdx - 1]!)) sIdx--;
+    while (eIdx < sentence.length && /[\w-]/.test(sentence[eIdx]!)) eIdx++;
+    const phrase = sentence.slice(sIdx, eIdx);
+    if (phrase.length >= 3 && !anchors.some((a) => a.toLowerCase() === phrase.toLowerCase())) anchors.push(phrase);
+  }
+  const bloom = naturalBloom(sentence, wc);
+  const difficulty = naturalDifficulty(wc);
+  for (let v = 0; v < Math.min(maxVariants, anchors.length); v++) {
+    const anchor = anchors[v]!;
+    const cloze = sentence.replace(new RegExp(escapeRe(anchor), "i"), "______");
+    if (cloze === sentence) continue;
+    const picks = buildDistractors(domId, anchor, ctx.materialConcepts, rot + v * 11);
+    if (picks.length < 3) continue;
+    const variant = (rot + v) % 2;
+    const text = `${STEMS[bloom][variant]}${cloze}”`;
+    const provenance = k.segLabel === "document" ? ctx.materialTitle : `${ctx.materialTitle} · ${k.segLabel}`;
+    out.push({
+      id: stableId("mat", text, provenance),
+      text,
+      options: [anchor, ...picks],
+      correctIndex: 0,
+      explanation: `The material states${k.segLabel === "document" ? "" : ` (${k.segLabel})`}: “${sentence}”`,
+      sourceRef: `Uploaded material · ${provenance}`,
+      domain: domId,
+      difficulty,
+      bloom,
+      generationType: "material-cloze",
+      sourceSnippet: sentence.slice(0, 220),
+      sourceSegmentId: k.segKey,
+    });
+  }
+  return out;
+}
+
 function buildMaterialPool(material: MaterialRecordInput | null): GeneratedQuestion[] {
   if (!material?.text || material.simulatedExtraction) return [];
+  const cached = poolCache.get(material);
+  if (cached) return cached;
+
+  const segments = segmentMaterial(material.text);
+  const knowledge = extractKnowledge(segments);
+  const ctx: BuilderContext = {
+    materialTitle: material.title,
+    materialConcepts: material.concepts ?? [],
+    all: knowledge,
+  };
+
   const out: GeneratedQuestion[] = [];
-  const materialConcepts = material.concepts ?? [];
-  for (const seg of segmentMaterial(material.text)) {
-    for (const raw of seg.body.split(/(?<=[.!?])\s+/)) {
-      const sentence = raw.trim();
-      if (!/[a-zA-Z]{3}/.test(sentence)) continue;
-      const wc = sentence.split(/\s+/).length;
-      if (wc < 8 || wc > 45) continue;
-      const bloom = naturalBloom(sentence, wc);
-      const difficulty = naturalDifficulty(wc);
-      const generationType: GeneratedQuestion["generationType"] =
-        bloom === "Application"
-          ? "material-procedure"
-          : bloom === "Analysis"
-            ? "material-causal"
-            : DEFINITIONAL.test(sentence)
-              ? "material-definition"
-              : "material-cloze";
-      const rot = fnv1a(sentence);
-      const lowerSentence = sentence.toLowerCase();
-      // One candidate per matching domain per sentence. The masked anchor is
-      // REAL source text — a verbatim concept when present, otherwise the
-      // domain topic term the sentence actually uses (word-boundary safe).
-      for (const [domId, lex] of Object.entries(LEXICON)) {
-        let anchor: string | null = null;
-        for (const concept of lex.concepts) {
-          if (lowerSentence.includes(concept.toLowerCase())) {
-            anchor = concept;
-            break;
-          }
-        }
-        if (!anchor) {
-          const term = [...lex.topicTerms]
-            .sort((a, b) => b.length - a.length)
-            .find((t) => lowerSentence.includes(t));
-          if (term) {
-            const idx = lowerSentence.indexOf(term);
-            let sIdx = idx;
-            let eIdx = idx + term.length;
-            while (sIdx > 0 && /[\w-]/.test(sentence[sIdx - 1]!)) sIdx--;
-            while (eIdx < sentence.length && /[\w-]/.test(sentence[eIdx]!)) eIdx++;
-            anchor = sentence.slice(sIdx, eIdx);
-          }
-        }
-        if (!anchor || anchor.length < 3) continue;
-        const cloze = sentence.replace(new RegExp(escapeRe(anchor), "i"), "______");
-        if (cloze === sentence) continue;
-        const picks = buildDistractors(domId, anchor, materialConcepts, rot);
-        if (picks.length < 3) continue;
-        const variant = rot % 2;
-        const text = `${STEMS[bloom][variant]}${cloze}”`;
-        const provenance = seg.label === "document" ? material.title : `${material.title} · ${seg.label}`;
-        out.push({
-          id: stableId("mat", text, provenance),
-          text,
-          options: [anchor, ...picks],
-          correctIndex: 0,
-          explanation: `The material states${seg.label === "document" ? "" : ` (${seg.label})`}: “${sentence}”`,
-          sourceRef: `Uploaded material · ${provenance}`,
-          domain: domId,
-          difficulty,
-          bloom,
-          generationType,
-          sourceSnippet: sentence.slice(0, 220),
-        });
-        break; // one candidate per lexicon domain per sentence
-      }
-      if (out.length > 400) break;
+  const seenStructural = new Set<string>();
+  const seenFingerprint = new Set<string>();
+
+  const accept = (c: GeneratedQuestion): boolean => {
+    if (out.length >= POOL_CAP) return false;
+    // Near-duplicate protection: reject identical word-bags and identical
+    // (type × segment × concept) structures even when punctuation differs.
+    const fp = fingerprint(`${c.text} ${c.options[c.correctIndex] ?? ""}`);
+    const structural = `${c.generationType}:${c.sourceSegmentId}:${fingerprint(c.options[c.correctIndex] ?? "").slice(0, 60)}`;
+    if (seenFingerprint.has(fp) || seenStructural.has(structural)) return false;
+    seenFingerprint.add(fp);
+    seenStructural.add(structural);
+    out.push(c);
+    return true;
+  };
+
+  for (const k of knowledge) {
+    for (const domId of k.domains.length ? k.domains : [detectDomains(k.sentence.toLowerCase())[0]?.id ?? DOMAINS[6].id]) {
+      for (const c of buildCandidatesFor(k, ctx, domId)) accept(c);
+      for (const c of clozeVariants(k, ctx, domId, 2)) accept(c);
+      if (out.length >= POOL_CAP) break;
     }
-    if (out.length > 400) break;
+    if (out.length >= POOL_CAP) break;
   }
+
+  poolCache.set(material, out);
   return out;
 }
 
@@ -699,6 +1260,7 @@ export function generateAssessment(
       config.bloom,
       config.domains.join("+"),
       String(options.generationNumber),
+      options.learnerContext?.averageGap !== undefined ? String(Math.round(options.learnerContext.averageGap)) : "",
     ].join("|"),
   );
   const rng = makeRng(seed);
@@ -726,8 +1288,9 @@ export function generateAssessment(
   };
   const noted = new Set<string>();
 
-  // Plan: difficulty/Bloom "Mixed" cycles through all levels; fixed values pin
-  // every slot. Slots interleave domains so quotas distribute evenly.
+  // Blueprint matrix — largest-remainder allocation over domain × difficulty ×
+  // Bloom. Adaptive mode derives its difficulty weights from live competency
+  // evidence when available.
   const diffPlan: Difficulty[] =
     config.difficulty === "Mixed" || config.difficulty === "Adaptive"
       ? ["Easy", "Medium", "Hard"]
@@ -736,11 +1299,7 @@ export function generateAssessment(
     config.bloom === "Mixed"
       ? ["Recall", "Understanding", "Application", "Analysis"]
       : [config.bloom as Bloom];
-  const slots = Array.from({ length: config.count }, (_, i) => ({
-    domain: scope[i % scope.length],
-    difficulty: diffPlan[i % diffPlan.length],
-    bloom: bloomPlan[i % bloomPlan.length],
-  }));
+  const slots = buildBlueprintMatrix(config, scope, options.learnerContext);
 
   const slotFits = (c: GeneratedQuestion, s: (typeof slots)[number]) =>
     c.domain === s.domain && diffPlan.includes(c.difficulty as Difficulty) && bloomPlan.includes(c.bloom);
@@ -767,17 +1326,49 @@ export function generateAssessment(
   const used = new Set<string>();
   let materialDerived = 0;
   let scenarioFallback = 0;
+  let exactMatches = 0;
   const domainShortfall = new Set<string>();
+  const segUsage = new Map<string, number>();
+  const typeUsage = new Map<string, number>();
+
+  /** Ranked pick (Part 27): blueprint fit first, then source-segment diversity,
+   *  question-type diversity, novelty vs this session's history, plus a small
+   *  seeded jitter so generations rotate without becoming unpredictable. */
+  const pickBest = (candidates: GeneratedQuestion[]): GeneratedQuestion | undefined => {
+    if (candidates.length === 0) return undefined;
+    let best: GeneratedQuestion | undefined;
+    let bestScore = -Infinity;
+    for (const c of candidates) {
+      const segPenalty = 12 * (segUsage.get(c.sourceSegmentId ?? c.sourceRef) ?? 0);
+      const typePenalty = 10 * (typeUsage.get(c.generationType) ?? 0);
+      const novelty = 8 * Math.min(2, (c.sourceSnippet?.length ?? 0) > 80 ? 1 : 0);
+      const score =
+        50 - segPenalty - typePenalty + novelty + rng() * 6;
+      if (score > bestScore) {
+        bestScore = score;
+        best = c;
+      }
+    }
+    return best;
+  };
 
   for (const slot of slots) {
     if (picked.length >= config.count) break;
     // Priority ladder — material always outranks the bank when any fresh
     // candidate exists; deviations are disclosed in report notes, never silent.
-    // 1) Material-grounded candidate matching the full slot contract…
-    let c: GeneratedQuestion | undefined = materialPool.find(
+    // 1) Material-grounded candidates matching the full slot contract, ranked…
+    const exactMaterial = materialPool.filter(
       (x) => slotFits(x, slot) && !used.has(x.id) && fresh(x),
     );
+    let c: GeneratedQuestion | undefined = pickBest(exactMaterial);
     let source: "material" | "scenario" = "material";
+    if (c) exactMatches++;
+    // 2) …then curated scenarios matching the same contract, ranked.
+    if (!c) {
+      c = pickBest(scenarioPool.filter((x) => slotFits(x, slot) && !used.has(x.id) && fresh(x)));
+      source = "scenario";
+      if (c) exactMatches++;
+    }
     // 2) …then a curated scenario matching the same contract.
     if (!c) {
       c = scenarioPool.find((x) => slotFits(x, slot) && !used.has(x.id) && fresh(x));
@@ -786,7 +1377,7 @@ export function generateAssessment(
     // 3) Any remaining material candidate that still honours FIXED blueprint
     //    dimensions — source dominance beats domain purity in mixed plans.
     if (!c) {
-      c = materialPool.find((x) => levelStrict(x) && !used.has(x.id) && fresh(x));
+      c = pickBest(materialPool.filter((x) => levelStrict(x) && !used.has(x.id) && fresh(x)));
       if (c) {
         source = "material";
         if (c.domain !== slot.domain) {
@@ -798,7 +1389,7 @@ export function generateAssessment(
     }
     // 4) Relaxed scenario — still honouring fixed dimensions.
     if (!c) {
-      c = scenarioPool.find((x) => levelStrict(x) && !used.has(x.id) && fresh(x));
+      c = pickBest(scenarioPool.filter((x) => levelStrict(x) && !used.has(x.id) && fresh(x)));
       if (c) {
         source = "scenario";
         noteOnce(noted, "bank-relaxed",
@@ -821,6 +1412,9 @@ export function generateAssessment(
     picked.push(c);
     if (source === "material") materialDerived++;
     else scenarioFallback++;
+    const segKey = c.sourceSegmentId ?? c.sourceRef;
+    segUsage.set(segKey, (segUsage.get(segKey) ?? 0) + 1);
+    typeUsage.set(c.generationType, (typeUsage.get(c.generationType) ?? 0) + 1);
   }
 
   // Randomized flag: shuffle question order and option order (remapping the
@@ -837,11 +1431,24 @@ export function generateAssessment(
     });
   }
 
+  // Near-duplicate protection on the delivered set — normalized word-bag
+  // fingerprints catch same-question-different-punctuation survivors.
+  const deliveredFps = new Set<string>();
+  finalQs = finalQs.filter((q) => {
+    const fp = fingerprint(`${q.text} ${q.options[q.correctIndex] ?? ""}`);
+    if (deliveredFps.has(fp)) return false;
+    deliveredFps.add(fp);
+    return true;
+  });
+
   if (finalQs.length < config.count) {
     notes.push(
       `Only ${finalQs.length} high-confidence question${finalQs.length === 1 ? "" : "s"} could be built for this blueprint — none were fabricated to reach ${config.count}.`,
     );
   }
+
+  const segmentsUsed = new Set(finalQs.map((q) => q.sourceSegmentId ?? q.sourceRef)).size;
+  const distinctTypes = new Set(finalQs.map((q) => q.generationType)).size;
 
   // --- Real quality audit: checks reflect the delivered output, not wishes ---
   const stems = new Set(finalQs.map((q) => q.text.toLowerCase()));
@@ -908,6 +1515,19 @@ export function generateAssessment(
         ? `${materialDerived}/${finalQs.length} derived from the uploaded material${scenarioFallback ? ` · ${scenarioFallback} bank fallback` : ""}`
         : `${finalQs.length}/${finalQs.length} from the curated scenario bank (no material selected)`,
     },
+    {
+      label: "Source diversity",
+      pass: segmentsUsed >= Math.min(3, finalQs.length),
+      note: `${segmentsUsed} distinct source segment${segmentsUsed === 1 ? "" : "s"} represented`,
+    },
+    {
+      label: "Question-type variety",
+      pass: distinctTypes >= Math.min(3, finalQs.length),
+      note:
+        distinctTypes >= Math.min(3, finalQs.length)
+          ? `${distinctTypes} generation strategies in play`
+          : "Limited by what the source supports — no fabricated variety",
+    },
   ];
   const passed = checks.filter((c) => c.pass).length;
   const score = Math.round((passed / checks.length) * 100);
@@ -921,10 +1541,14 @@ export function generateAssessment(
   const report: BlueprintReport = {
     requestedCount: config.count,
     deliveredCount: finalQs.length,
+    adherencePct: Math.round((exactMatches / Math.max(slots.length, 1)) * 100),
     domainDistribution: tally((q) => domainName(q.domain)),
     difficultyDistribution: tally((q) => q.difficulty),
     bloomDistribution: tally((q) => q.bloom),
+    questionTypes: tally((q) => TYPE_LABELS[q.generationType] ?? q.generationType),
     sources: { materialDerived, scenarioFallback },
+    candidatePoolSize: materialPool.length + scenarioPool.length,
+    sourceSegmentsUsed: segmentsUsed,
     notes,
   };
 

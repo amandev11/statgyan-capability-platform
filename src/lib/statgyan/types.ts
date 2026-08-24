@@ -98,10 +98,32 @@ export interface GeneratedQuestion {
     | "material-cloze"
     | "material-definition"
     | "material-procedure"
+    | "material-rule"
     | "material-causal"
+    | "material-comparison"
+    | "material-application"
+    | "material-analysis"
+    | "material-example"
+    | "material-numerical"
     | "scenario";
   /** Exact supporting sentence, when derived from uploaded material. */
   sourceSnippet?: string;
+  /** Segment identifier within the source document (page/section/slide key). */
+  sourceSegmentId?: string;
+}
+
+/** One cell of the blueprint matrix — the atomic unit the selector must fill. */
+export interface QuestionSlot {
+  slotId: string;
+  domain: string;
+  difficulty: Difficulty;
+  bloom: Bloom;
+}
+
+/** Evidence about the learner used by Adaptive blueprints (never fabricated).
+ *  averageGap = mean positive gap across the learner's competency profile. */
+export interface LearnerContext {
+  averageGap?: number;
 }
 
 /** Session context so repeated generations rotate instead of repeating. */
@@ -110,16 +132,25 @@ export interface GenerationOptions {
   generationNumber: number;
   /** Candidate IDs used in this session; avoided while alternatives exist. */
   excludeIds?: string[];
+  /** Live competency evidence, enabling evidence-driven Adaptive difficulty. */
+  learnerContext?: LearnerContext;
 }
 
 /** Transparent blueprint validation — what was requested vs what was actually delivered. */
 export interface BlueprintReport {
   requestedCount: number;
   deliveredCount: number;
+  /** Share of delivered slots that honour their matrix contract exactly (0–100). */
+  adherencePct: number;
   domainDistribution: { label: string; count: number }[];
   difficultyDistribution: { label: string; count: number }[];
   bloomDistribution: { label: string; count: number }[];
+  questionTypes: { label: string; count: number }[];
   sources: { materialDerived: number; scenarioFallback: number };
+  /** Size of the full candidate pool the selection drew from. */
+  candidatePoolSize: number;
+  /** Distinct source segments contributing to the delivered set. */
+  sourceSegmentsUsed: number;
   /** Honest notes about any blueprint dimension that could not be fully honoured. */
   notes: string[];
 }
