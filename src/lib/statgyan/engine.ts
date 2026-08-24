@@ -519,11 +519,13 @@ const SCENARIO_BANK: ScenarioSeed[] = [
 ];
 
 // Deterministic identity: stable across sessions, unique per stem+source.
-function stableId(...parts: string[]): string {
+// Seeded-PRNG primitives are shared with the AI candidate pipeline so both
+// paths randomize reproducibly.
+export function stableId(...parts: string[]): string {
   return fnv1a(parts.join("¦")).toString(36);
 }
 
-function fnv1a(input: string): number {
+export function fnv1a(input: string): number {
   let h = 2166136261;
   for (let i = 0; i < input.length; i++) {
     h ^= input.charCodeAt(i);
@@ -536,7 +538,7 @@ function fnv1a(input: string): number {
  *  never Math.random(). The seed derives from material + blueprint + generation
  *  number, so identical inputs reproduce identically while each new generation
  *  rotates deterministically. */
-function makeRng(seed: number): () => number {
+export function makeRng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) | 0;
@@ -546,7 +548,7 @@ function makeRng(seed: number): () => number {
   };
 }
 
-function seededShuffle<T>(items: readonly T[], rng: () => number): T[] {
+export function seededShuffle<T>(items: readonly T[], rng: () => number): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -1069,8 +1071,19 @@ function buildCandidatesFor(k: SentenceKnowledge, ctx: BuilderContext, domId: st
 }
 
 /** Human-readable labels for the question-type distribution report. */
-const TYPE_LABELS: Record<GeneratedQuestion["generationType"], string> = {
+const TYPE_LABELS: Partial<Record<GeneratedQuestion["generationType"], string>> = {
   "material-definition": "Definition",
+  "ai-definition": "AI · Definition",
+  "ai-conceptual": "AI · Concept",
+  "ai-cloze": "AI · Cloze",
+  "ai-comparison": "AI · Comparison",
+  "ai-procedure": "AI · Procedure",
+  "ai-cause-effect": "AI · Cause/effect",
+  "ai-scenario": "AI · Scenario",
+  "ai-application": "AI · Application",
+  "ai-analysis": "AI · Analysis",
+  "ai-numerical": "AI · Numerical",
+  "ai-interpretation": "AI · Interpretation",
   "material-cloze": "Concept cloze",
   "material-procedure": "Procedure",
   "material-rule": "Rule application",

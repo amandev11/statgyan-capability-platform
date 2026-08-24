@@ -105,7 +105,19 @@ export interface GeneratedQuestion {
     | "material-analysis"
     | "material-example"
     | "material-numerical"
-    | "scenario";
+    | "scenario"
+    /** AI-generated candidates (provider recorded in BlueprintReport.ai). */
+    | "ai-definition"
+    | "ai-conceptual"
+    | "ai-cloze"
+    | "ai-comparison"
+    | "ai-procedure"
+    | "ai-cause-effect"
+    | "ai-scenario"
+    | "ai-application"
+    | "ai-analysis"
+    | "ai-numerical"
+    | "ai-interpretation";
   /** Exact supporting sentence, when derived from uploaded material. */
   sourceSnippet?: string;
   /** Segment identifier within the source document (page/section/slide key). */
@@ -153,4 +165,15 @@ export interface BlueprintReport {
   sourceSegmentsUsed: number;
   /** Honest notes about any blueprint dimension that could not be fully honoured. */
   notes: string[];
+  /** Present only when the AI pipeline contributed to this generation. */
+  ai?: {
+    /** Provider/model string, e.g. "openrouter/free". */
+    provider: string;
+    /** Questions delivered from AI candidates. */
+    generated: number;
+    /** Slots the deterministic engine had to fill after AI shortfalls/rejections. */
+    fallbackFilled: number;
+    /** Mean grounding score from stage-2 validation (0–1); undefined if unvalidated. */
+    avgGrounding?: number;
+  };
 }

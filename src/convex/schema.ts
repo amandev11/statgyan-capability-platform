@@ -112,6 +112,11 @@ const schema = defineSchema(
       questionOpportunities: v.number(),
       pages: v.optional(v.number()), // real page count when the parser provides one
       text: v.optional(v.string()), // persisted extraction (capped) — powers grounded MCQ generation
+      // AI document-knowledge map (cached). Invalidated when analysisHash no
+      // longer matches the extracted text — never re-sent needlessly.
+      knowledgeMap: v.optional(v.any()),
+      analysisHash: v.optional(v.string()),
+      analysisModel: v.optional(v.string()),
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
 
@@ -127,6 +132,7 @@ const schema = defineSchema(
       bloom: v.optional(v.string()),
       passingScore: v.optional(v.number()),
       randomized: v.optional(v.boolean()),
+      generatedBy: v.optional(v.string()), // provider/model provenance, e.g. "openrouter/free" or "fallback-engine"
       questions: v.array(
         v.object({
           text: v.string(),

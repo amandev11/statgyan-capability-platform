@@ -502,6 +502,7 @@ export const saveAssessment = mutation({
     bloom: v.optional(v.string()),
     passingScore: v.optional(v.number()),
     randomized: v.optional(v.boolean()),
+    generatedBy: v.optional(v.string()), // provider/model provenance, e.g. "openrouter/free" or "fallback-engine"
     questions: v.array(
       v.object({
         text: v.string(),
@@ -522,6 +523,24 @@ export const saveAssessment = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
     return ctx.db.insert("assessments", { userId, ...args, createdAt: Date.now() });
+  },
+});
+
+// Persist the AI document-knowledge map (owner-verified). Cached on the
+// material row so repeated generations never re-analyze unchanged content.
+export const saveKnowledgeMap = mutation({
+  args: {
+    materialId: v.id("materials"),
+    knowledgeMap: v.any(),
+    analysisHash: v.string(),
+    analysisModel: v.string(),
+  },
+  handler: async (ctx, { materialId, knowledgeMap, analysisHash, analysisModel }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const material = await ctx.db.get(materialId);
+    if (!material || material.userId !== userId) throw new Error("Material not found");
+    await ctx.db.patch(materialId, { knowledgeMap, analysisHash, analysisModel });
   },
 });
 

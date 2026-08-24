@@ -1,22 +1,31 @@
 import { PageContainer, SectionHeader, SkeletonBlock } from "@/components/quiza/primitives";
 import { api } from "@/convex/_generated/api";
+import {
+  assembleAiResult,
+  buildSourceDigest,
+  contentHash,
+  planSlots,
+  selectBestCandidates,
+} from "@/lib/statgyan/ai-client";
+import type { AiCandidate, KnowledgeMap } from "@/lib/statgyan/ai-client";
 import { DOMAINS, domainName, generateAssessment } from "@/lib/statgyan/engine";
 import type { GenerationResult } from "@/lib/statgyan/engine";
-import type { AssessmentConfig } from "@/lib/statgyan/types";
+import type { AssessmentConfig, GeneratedQuestion, QuestionSlot } from "@/lib/statgyan/types";
 import { cn } from "@/lib/utils";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
   Check,
   Info,
+  Loader2,
   RefreshCw,
   ShieldCheck,
   Sparkles,
   Wand2,
   X,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 export default function Generate() {
@@ -27,6 +36,10 @@ export default function Generate() {
     materialId ? { id: materialId as never } : "skip",
   );
   const saveAssessment = useMutation(api.quiza.saveAssessment);
+  const analyzeMaterial = useAction(api.ai.analyzeMaterial);
+  const generateSlotCandidates = useAction(api.ai.generateSlotCandidates);
+  const validateGroundingFn = useAction(api.ai.validateGrounding);
+  const saveKnowledgeMap = useMutation(api.quiza.saveKnowledgeMap);
   // Live competency evidence powers Adaptive difficulty — derived from real
   // gaps, never fabricated.
   const profile = useQuery(api.quiza.myProfile);
@@ -58,6 +71,25 @@ export default function Generate() {
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<string | null>(null);
 
+  // --- AI pipeline state -------------------------------------------------------
+  const checkAiStatus = useAction(api.ai.aiStatus);
+  const [aiStatus, setAiStatus] = useState<{ configured: boolean; model: string | null }>();
+  useEffect(() => {
+    let live = true;
+    void checkAiStatus()
+      .then((s) => live && setAiStatus(s))
+      .catch(() => live && setAiStatus({ configured: false, model: null }));
+    return () => {
+      live = false;
+    };
+  }, [checkAiStatus]);
+  /** Current real pipeline stage — shown while generating, never faked. */
+  const [stage, setStage] = useState<string | null>(null);
+  /** Honest degradation notice when the AI path fails mid-pipeline. */
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  /** Session history of delivered stems (for AI novelty + server avoid-list). */
+  const stemsRef = useRef<string[]>([]);
+
   const sourceMaterial = useMemo(() => {
     if (material && "title" in material) {
       return {
@@ -82,47 +114,305 @@ export default function Generate() {
   const configKey = JSON.stringify(config);
   const stale = generated !== null && generatedFor !== null && generatedFor !== configKey;
 
-  const run = () => {
-    setPublished(null);
-    setGenError(null);
-    const next = generationNumber + 1;
-    setGenerationNumber(next);
-    const result = generateAssessment(sourceMaterial, config, {
-      generationNumber: next,
-      excludeIds: [...historyRef.current],
-      learnerContext,
-    });
-    for (const q of result.questions) historyRef.current.add(q.id);
+  /** Record a finished result: session rotation state + UI. Shared by both engines. */
+  const commit = (result: GenerationResult) => {
+    for (const q of result.questions) {
+      historyRef.current.add(q.id);
+      stemsRef.current.push(`${q.text} ${q.options[q.correctIndex] ?? ""}`);
+    }
+    if (stemsRef.current.length > 80) stemsRef.current = stemsRef.current.slice(-80);
     setGenerated(result);
     setGeneratedFor(configKey);
   };
 
-  /** Replace one reviewed question with a fresh candidate matching its exact
-   *  blueprint contract (domain × difficulty × Bloom), excluding all current IDs. */
-  const regenerateQuestion = (index: number) => {
-    if (!generated) return;
-    const old = generated.questions[index];
-    if (!old) return;
-    const next = generationNumber + 1;
-    setGenerationNumber(next);
+  /** Deterministically build ONE question for an exact blueprint slot.
+   *  Used to fill AI shortfalls/rejections — labelled as fallback in the report. */
+  const fillSlotDeterministic = (
+    slot: QuestionSlot,
+    nonce: number,
+    excludeIds: Set<string>,
+  ): GeneratedQuestion | undefined => {
     const result = generateAssessment(
       sourceMaterial,
       {
         ...config,
         count: 1,
-        domains: [old.domain],
-        difficulty: (["Easy", "Medium", "Hard"].includes(old.difficulty)
-          ? old.difficulty
-          : "Mixed") as AssessmentConfig["difficulty"],
-        bloom: old.bloom as AssessmentConfig["bloom"],
+        domains: [slot.domain],
+        difficulty: slot.difficulty,
+        bloom: slot.bloom as AssessmentConfig["bloom"],
+        randomized: false,
+      },
+      { generationNumber: nonce, excludeIds: [...excludeIds], learnerContext },
+    );
+    return result.questions[0];
+  };
+
+  /** Cached knowledge map for this material — analysed once per content hash. */
+  const ensureKnowledgeMap = async (): Promise<KnowledgeMap | undefined> => {
+    if (!sourceMaterial?.text || !materialId) return undefined;
+    const cached = material?.knowledgeMap as KnowledgeMap | undefined;
+    const hash = contentHash(sourceMaterial.text);
+    if (cached && material?.analysisHash === hash) return cached;
+    setStage("Analyzing material…");
+    const res = await analyzeMaterial({ title: sourceMaterial.title, text: sourceMaterial.text });
+    await saveKnowledgeMap({
+      materialId: materialId as never,
+      knowledgeMap: res.knowledgeMap,
+      analysisHash: hash,
+      analysisModel: res.model,
+    });
+    return res.knowledgeMap as KnowledgeMap;
+  };
+
+  /** AI-first pipeline. Returns false whenever ANY stage fails so the caller
+   *  falls back to the deterministic engine — never silently empty. */
+  const runAiPipeline = async (next: number): Promise<boolean> => {
+    if (!aiStatus?.configured || !sourceMaterial?.text || !materialId) return false;
+    let provider = aiStatus.model ?? "openrouter/free";
+    try {
+      const knowledgeMap = await ensureKnowledgeMap();
+      const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap);
+
+      // Blueprint is authoritative: same planner the deterministic engine uses.
+      setStage("Building blueprint…");
+      const scope = config.domains.length
+        ? config.domains
+        : sourceMaterial.domains.length
+          ? sourceMaterial.domains
+          : DOMAINS.map((d) => d.id);
+      const slots = planSlots(config, scope, learnerContext);
+      if (slots.length === 0) return false;
+
+      // Multiple candidates per slot — local scoring selects the strongest.
+      setStage("Generating candidates…");
+      const candRes = await generateSlotCandidates({
+        materialTitle: sourceMaterial.title,
+        slots: slots.map((s) => ({
+          slotId: s.slotId,
+          domainName: domainName(s.domain),
+          difficulty: s.difficulty,
+          bloom: s.bloom,
+        })),
+        sourceDigest: digest,
+        generationNumber: next,
+        avoidStems: stemsRef.current.slice(-30),
+      });
+      provider = candRes.model;
+
+      const selection = selectBestCandidates({
+        slots,
+        candidates: candRes.candidates as AiCandidate[],
+        avoidStems: stemsRef.current,
+        generationNumber: next,
+      });
+
+      // Stage-2 grounding validation against the actual source.
+      setStage("Checking source grounding…");
+      let kept = selection.chosen;
+      const openSlots = [...selection.unfilledSlots];
+      let avgGrounding: number | undefined;
+      if (kept.length > 0) {
+        const verdicts = await validateGroundingFn({
+          materialTitle: sourceMaterial.title,
+          sourceDigest: digest,
+          items: kept.map((p, i) => ({
+            index: i,
+            text: p.candidate.text,
+            options: p.candidate.options,
+            correctIndex: p.candidate.correctIndex,
+            claimedSnippet: p.candidate.sourceSnippet,
+          })),
+        });
+        if (verdicts.available && verdicts.verdicts.length > 0) {
+          const vmap = new Map(verdicts.verdicts.map((v) => [v.index, v]));
+          const good: typeof kept = [];
+          const scores: number[] = [];
+          kept.forEach((pair, i) => {
+            const v = vmap.get(i);
+            if (v && (!v.valid || v.groundingScore < 0.6)) {
+              openSlots.push(pair.slot); // hallucinated / unsupported → reject
+            } else {
+              good.push(pair);
+              if (v) scores.push(v.groundingScore);
+            }
+          });
+          kept = good;
+          if (scores.length > 0) {
+            avgGrounding = scores.reduce((a, b) => a + b, 0) / scores.length;
+          }
+        }
+      }
+
+      // Deterministic engine fills unmet/rejected slots — labelled honestly.
+      setStage("Finalizing assessment…");
+      const notes: string[] = [];
+      const usedIds = new Set(historyRef.current);
+      const fallbackQuestions: GeneratedQuestion[] = [];
+      openSlots.forEach((slot, i) => {
+        const q = fillSlotDeterministic(slot, next * 31 + i, usedIds);
+        if (q) {
+          fallbackQuestions.push(q);
+          usedIds.add(q.id);
+        }
+      });
+      if (selection.unfilledSlots.length > 0) {
+        notes.push(
+          `${selection.unfilledSlots.length} blueprint slot${selection.unfilledSlots.length === 1 ? "" : "s"} had no AI candidate that passed validation — filled from the deterministic engine.`,
+        );
+      }
+
+      const result = assembleAiResult({
+        config,
+        chosen: kept,
+        fallbackQuestions,
+        materialTitle: sourceMaterial.title,
+        provider,
+        generationNumber: next,
+        avgGrounding,
+        requestedCount: config.count,
+        scope,
+        notes,
+      });
+      if (result.questions.length === 0) return false;
+      commit(result);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setStage(null);
+    }
+  };
+
+  const run = async () => {
+    setPublished(null);
+    setGenError(null);
+    setAiNotice(null);
+    const next = generationNumber + 1;
+    setGenerationNumber(next);
+    if (await runAiPipeline(next)) return;
+    // Honest degradation: name why we fell back, then use the deterministic engine.
+    if (aiStatus?.configured && sourceMaterial?.text) {
+      setAiNotice("AI generation unavailable — using StatGyan fallback engine.");
+    }
+    const result = generateAssessment(sourceMaterial, config, {
+      generationNumber: next,
+      excludeIds: [...historyRef.current],
+      learnerContext,
+    });
+    commit(result);
+  };
+
+  /** Replace one reviewed question with a fresh candidate matching its exact
+   *  blueprint contract (domain × difficulty × Bloom), excluding all current IDs.
+   *  Tries the AI engine first; deterministic engine answers if AI is off/down. */
+  const regenerateQuestion = async (index: number) => {
+    if (!generated) return;
+    const old = generated.questions[index];
+    if (!old) return;
+    const next = generationNumber + 1;
+    setGenerationNumber(next);
+    setGenError(null);
+    const slot: QuestionSlot = {
+      slotId: `regen-${next}`,
+      domain: old.domain,
+      difficulty: (["Easy", "Medium", "Hard"].includes(old.difficulty)
+        ? old.difficulty
+        : "Medium") as QuestionSlot["difficulty"],
+      bloom: old.bloom as QuestionSlot["bloom"],
+    };
+    const excludeIds = new Set<string>([
+      ...historyRef.current,
+      ...generated.questions.map((q) => q.id),
+    ]);
+
+    // --- AI attempt (single slot, validated like the full pipeline) ---------
+    if (aiStatus?.configured && sourceMaterial?.text && materialId) {
+      try {
+        setStage("Regenerating with AI…");
+        const knowledgeMap = await ensureKnowledgeMap();
+        const digest = buildSourceDigest(sourceMaterial.text, knowledgeMap);
+        const candRes = await generateSlotCandidates({
+          materialTitle: sourceMaterial.title,
+          slots: [
+            {
+              slotId: slot.slotId,
+              domainName: domainName(slot.domain),
+              difficulty: slot.difficulty,
+              bloom: slot.bloom,
+            },
+          ],
+          sourceDigest: digest,
+          generationNumber: next,
+          avoidStems: [...stemsRef.current, ...generated.questions.map((q) => q.text)],
+        });
+        const selection = selectBestCandidates({
+          slots: [slot],
+          candidates: candRes.candidates as AiCandidate[],
+          avoidStems: stemsRef.current,
+          generationNumber: next,
+        });
+        const pair = selection.chosen[0];
+        if (pair) {
+          const verdicts = await validateGroundingFn({
+            materialTitle: sourceMaterial.title,
+            sourceDigest: digest,
+            items: [
+              {
+                index: 0,
+                text: pair.candidate.text,
+                options: pair.candidate.options,
+                correctIndex: pair.candidate.correctIndex,
+                claimedSnippet: pair.candidate.sourceSnippet,
+              },
+            ],
+          });
+          const v = verdicts.verdicts[0];
+          const acceptable = !verdicts.available || !v || (v.valid && v.groundingScore >= 0.6);
+          if (acceptable) {
+            const result = assembleAiResult({
+              config: { ...config, count: generated.questions.length },
+              chosen: [pair],
+              fallbackQuestions: [],
+              materialTitle: sourceMaterial.title,
+              provider: candRes.model,
+              generationNumber: next,
+              requestedCount: 1,
+              scope: [slot.domain],
+              notes: [],
+            });
+            const replacement = result.questions[0];
+            if (replacement) {
+              historyRef.current.add(replacement.id);
+              stemsRef.current.push(`${replacement.text} ${replacement.options[replacement.correctIndex] ?? ""}`);
+              setGenerated({
+                ...generated,
+                questions: generated.questions.map((q, i) => (i === index ? replacement : q)),
+              });
+              return;
+            }
+          }
+        }
+      } catch {
+        // fall through to deterministic regeneration
+      } finally {
+        setStage(null);
+      }
+    }
+
+    // --- Deterministic regeneration ---------------------------------------
+    const result = generateAssessment(
+      sourceMaterial,
+      {
+        ...config,
+        count: 1,
+        domains: [slot.domain],
+        difficulty: slot.difficulty as AssessmentConfig["difficulty"],
+        bloom: slot.bloom as AssessmentConfig["bloom"],
         randomized: false,
       },
       {
         generationNumber: next,
-        excludeIds: [
-          ...historyRef.current,
-          ...generated.questions.map((q) => q.id),
-        ],
+        excludeIds: [...excludeIds],
         learnerContext,
       },
     );
@@ -168,6 +458,7 @@ export default function Generate() {
         bloom: config.bloom,
         passingScore: config.passingScore,
         randomized: config.randomized,
+        generatedBy: generated.report.ai ? `ai:${generated.report.ai.provider}` : "fallback-engine",
         questions: generated.questions,
       });
       setPublished(id);
@@ -185,6 +476,31 @@ export default function Generate() {
           Configure a blueprint; the generator builds source-traced questions from your
           uploaded material and the curated scenario bank.
         </p>
+        {/* Honest engine status — provider/model shown, keys never leave the server */}
+        <div
+          role="status"
+          className="mt-3 inline-flex items-center gap-2 rounded-full border hairline bg-[var(--qz-surface-1)] px-3 py-1 text-[11px]"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "size-1.5 rounded-full",
+              aiStatus === undefined
+                ? "bg-white/30"
+                : aiStatus.configured
+                  ? "bg-emerald-400"
+                  : "bg-amber-300",
+            )}
+          />
+          <span className="num font-medium">AI Assessment Engine</span>
+          <span className="text-muted-qz">
+            {aiStatus === undefined
+              ? "checking…"
+              : aiStatus.configured
+                ? `connected · ${aiStatus.model}`
+                : "fallback mode"}
+          </span>
+        </div>
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
@@ -303,13 +619,25 @@ export default function Generate() {
             </label>
 
             <button
-              onClick={run}
+              onClick={() => void run()}
+              disabled={stage !== null}
               data-cursor="hover"
-              className="btn-specular inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold"
+              className="btn-specular inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold disabled:opacity-60"
             >
               <Wand2 className="size-4" />{" "}
-              {generated ? `Generate again — round ${generationNumber + 1}` : "Generate questions"}
+              {stage
+                ? "Generating…"
+                : generated
+                  ? `Generate again — round ${generationNumber + 1}`
+                  : "Generate questions"}
             </button>
+            <p aria-live="polite" className="min-h-4 text-[11px] text-muted-qz">
+              {stage && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 className="size-3 animate-spin" /> {stage}
+                </span>
+              )}
+            </p>
           </div>
         </section>
 
@@ -324,6 +652,16 @@ export default function Generate() {
             </div>
           ) : (
             <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+              {aiNotice && (
+                <div
+                  role="status"
+                  className="mb-4 flex items-start gap-2 rounded-xl border border-amber-300/25 bg-amber-400/[0.07] px-4 py-3 text-xs leading-relaxed text-amber-100"
+                >
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  <span>{aiNotice}</span>
+                </div>
+              )}
+
               {stale && (
                 <div
                   role="status"
@@ -386,6 +724,20 @@ export default function Generate() {
                     <span className="text-muted-qz">Types:</span>{" "}
                     {dists(generated.report.questionTypes)}
                   </p>
+                  {generated.report.ai && (
+                    <p className="sm:col-span-2">
+                      <span className="text-muted-qz">Engine:</span>{" "}
+                      <span className="num">
+                        {generated.report.ai.generated} AI · {generated.report.ai.fallbackFilled} fallback
+                      </span>
+                      {generated.report.ai.avgGrounding !== undefined && (
+                        <span className="num text-muted-qz">
+                          {" "}· grounding {Math.round(generated.report.ai.avgGrounding * 100)}%
+                        </span>
+                      )}
+                      <span className="num text-muted-qz"> · {generated.report.ai.provider}</span>
+                    </p>
+                  )}
                 </div>
                 {generated.report.notes.length > 0 && (
                   <ul className="mt-3 space-y-1.5 border-t hairline-faint pt-3">
@@ -443,12 +795,12 @@ export default function Generate() {
                             aria-label={`Regenerate question ${i + 1} keeping its domain, difficulty and level`}
                             onClick={(e) => {
                               e.preventDefault();
-                              regenerateQuestion(i);
+                              void regenerateQuestion(i);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" || e.key === " ") {
                                 e.preventDefault();
-                                regenerateQuestion(i);
+                                void regenerateQuestion(i);
                               }
                             }}
                             className="rounded-md p-1 text-muted-qz transition-colors hover:bg-white/[0.06] hover:text-[var(--qz-accent)]"
